@@ -1,498 +1,1108 @@
 # L2 Technical Brief
 
-Draft for architectural review · October 4, 2026
+Draft for architectural review · October 4, 2026 · restructured October 5, 2026
 
-L2 is a general-purpose successor to Loom. A user supplies a challenge; L2 establishes the intended outcome with the user, designs a process, synthesizes the harnesses needed to execute it, and adapts those harnesses as evidence changes its understanding of the work. A harness may include generated execution logic, tools, decision policies, verifiers, and isolated environments. A stable runtime enforces the user's agreements, authority, budget, and artifact integrity throughout execution.
+L2 is a general-purpose successor to Loom. A user brings a challenge. L2 agrees the intended outcome with them, designs a process to reach it, and synthesizes a harness for every step of that process. It then adapts those harnesses as evidence changes its understanding of the work. A harness can include generated execution logic, tools, decision policies, verifiers and isolated environments. A stable runtime enforces the user's agreements, authority, budget and artifact integrity throughout.
 
-This brief defines product behavior, architectural boundaries, proposed contracts, decision-model opportunities, and an implementation sequence. It is a design document, not an implementation or a claim that L2 already exists. The education and construction examples test generality; neither supplies domain concepts to the core runtime.
+This is a high-level design. It sets out purpose, decisions, invariants, architecture and the main subsystems. Interface detail is left to companion specs. Nothing here claims that L2 exists yet.
 
-## 1. Decisions established with the user
+**Status labels.** Each section opens with a status line:
 
-The following requirements are established. Technical choices elsewhere are proposals unless explicitly identified as established.
+- **Established** means agreed with the user.
+- **Proposed** means a design recommendation that has not been agreed.
+- **Open** means unresolved; section 21 lists these.
 
-| Area | Established direction |
+**Companion documents**
+
+| Document | Contents |
 | --- | --- |
-| Product | General-purpose successor to Loom; no requirement to preserve its implementation or process format |
-| Synthesis | Full synthesis, including new tools and execution-loop logic where useful |
-| Adaptation | Ongoing adaptation of harnesses and the overall process |
-| Consensus | Surface unresolved choices whose meaningfully different answers materially change the output; show the recommended path and justification; always permit a typed response |
-| Scope | Minimize consequential assumptions and detect changes in meaning, emphasis, audience, and intended use throughout the run |
-| Economics | Propose an approximate budget for acceptance or rejection; track budget against actuals; allow explicitly approved increases |
-| Decision models | Analyze their use throughout L2 to improve inputs, outputs, context efficiency, execution, and economics |
-| Deployment | Docker deployment for the L2 core, with separately isolated generated workloads |
-| Interface | Browser UI served by the Docker deployment, plus API and CLI for automation |
-| Identity | One connection profile per instance; one configured account selection per connected service; separate identities use separate instances |
-| Extensions | Generated code and dependency installation may execute in isolation within approved limits; new credentials, paid service commitments, and broader access require a user decision |
-| External actions | Staging is autonomous within scope; publication and consequential external actions require authorization unless already granted |
-| Reuse | Persist versioned harnesses, tested tools, decision policies, and explicit preferences; project evidence stays project-scoped |
-| Design examples | A complete Texas grade 7 mathematics course delivered through an existing learning framework; a construction estimate from a supplied folder |
+| [L2-SECURITY-THREATS.md](L2-SECURITY-THREATS.md) | Threat catalogue, standard defenses and their adaptive-attack status, candidate detection methods, security evaluation plan |
+| [L2-DECISION-MODELS.md](L2-DECISION-MODELS.md) | Provider notes (perishable), policy calibration procedure, deployment states |
+| Interface specs (to be written) | Harness runtime protocol, ingress record, egress request, decision service, connector manifest, API and CLI |
 
-The first-release proposal is single-user, with concurrent runs and harnesses. Organization administration, multiple authentication profiles, and multi-user consensus are outside that release. An instance may connect to several services and model providers without introducing several identity profiles.
+---
 
-## 2. What changes from Loom
+## 1. Purpose, users and scope
 
-Loom's ad hoc path already transforms a free-form goal into a process with phases, dependencies, acceptance criteria, deliverables, and tool requirements. L2 extends that design activity to the execution system for each step. The factory asks both what work is necessary and what observations, actions, feedback, and environment will make that work succeed.
+*Status: Established October 5, 2026, except where marked*
 
-The source inspection below is a limited review of the current working tree, which contains local modifications. It establishes mechanisms present in the code, not proof of their production reliability or a diagnosis of every reported failure.
+**Primary goal.** Build a dynamic system that adapts to solve or complete complex challenges and problems.
 
-| Observed Loom mechanism | L2 design implication |
+**Users.**
+
+- **Open-source reference.** A public GitHub repo for harness engineers and anyone else who wants to learn from or reuse the patterns.
+- **Operators.** You and your internal teams. Each person runs their own instance with their own connection profile.
+
+**What release one must deliver as a reference.**
+
+- A public GitHub repo.
+- Readable architecture docs, so others can learn the patterns without running L2.
+- Easy self-hosting with Docker.
+
+**Release-one success.**
+
+- **Works end to end on one real task.** *Open: which task.*
+- **Beats a strong single-harness agent.** *Open: the measure and the baseline will be set once the work is further along.*
+
+**Non-goals for release one.**
+
+- Multi-user support and organization administration.
+- Certifying real-world outcomes.
+- Exactly-once external effects.
+- Frontends other than the browser.
+
+**How the established decisions serve the goal.** The decisions in section 2 are how L2 reaches its goal. They are not separate goals. They cover full synthesis, ongoing adaptation, consultation instead of termination, consensus, scope protection, budget agreement, decision models and the security perimeter.
+
+---
+
+## 2. Established decisions
+
+*Status: Established (agreed October 4–5, 2026). Wording of some rows is Claude's summary of the decision; confirm during review.*
+
+| Area | Decision |
 | --- | --- |
-| [Ad hoc synthesis](../src/loom/tui/app/process_runs/adhoc.py) and [launch resolution](../src/loom/tui/app/process_runs/lifecycle.py) | Preserve goal-driven design and inspectable synthesis traces; promote factory behavior into a headless application service shared by every interface |
-| [Process and phase contracts](../src/loom/processes/schema.py) | Preserve explicit outputs, verification, iteration, and remediation; separate outcome agreements from generated execution specifications |
-| [Evidence outside task prompts](../src/loom/state/evidence.py) | Retain durable evidence independently of active context; improve admission and sufficiency checks without deleting excluded evidence |
-| [Context budgeting and protected exchanges](../src/loom/engine/compaction_control.py) | Account for complete requests; protect agreements and valid tool exchanges; make context degradation explicit |
-| [Typed correction lifecycle](../src/loom/engine/correction/types.py) | Preserve typed failures and progress signals; distinguish repair, harness redesign, process replan, and user intervention |
-| [Output coordination](../src/loom/engine/orchestrator/output.py) and [artifact seals](../src/loom/engine/orchestrator/evidence.py) | Use isolated attempts, immutable artifact revisions, controlled promotion, and one owner for final assembly |
-| [Run resource limits](../src/loom/engine/orchestrator/budget.py) | Extend counters into durable monetary estimates, reservations, settlement, forecasting, and budget revisions |
-| [Question normalization](../src/loom/tools/ask_user.py) and [durable questions](../src/loom/state/migrations/steps/task_questions.py) | Make questions application state with dependencies and answer provenance, independent of a terminal or active model call |
-| [Authentication resolution](../src/loom/auth/runtime.py) | Remove profile selection and override precedence; retain scope checks, credential lifecycle, and actionable connection failures |
-| [Migration guarantees](DB-MIGRATIONS.md) | Maintain explicit migrations, backups, upgrade verification, and blocking failures rather than silent loss of durable state |
+| Product | General-purpose successor to Loom. No requirement to preserve its implementation or process format |
+| Synthesis | Full synthesis, including new tools and execution-loop logic. **Every step gets a designed harness**, built from reused components where they fit |
+| Adaptation | Ongoing adaptation of harnesses and of the overall process |
+| Termination | **L2 never abandons a step or a run on its own.** When a step keeps failing to produce valid output, it pauses and the user is consulted about how to re-adapt |
+| Consensus | Raise unresolved choices whose answers would materially change the output. Show the recommended path and why. Always allow a typed response |
+| Scope | Minimize consequential assumptions. Detect changes in meaning, emphasis, audience and intended use throughout the run |
+| Economics | Propose an approximate budget for acceptance or rejection. Track actuals against it. Increases need explicit approval |
+| Decision models | A core capability. Analyze their use throughout L2 to improve inputs, outputs, context efficiency, execution and economics |
+| Deployment | Docker deployment for the core, with generated workloads isolated separately |
+| Interface | Browser UI served by the deployment, plus API and CLI for automation |
+| Identity | One connection profile per instance and one configured account per connected service. Separate identities need separate instances |
+| Extensions | Generated code and dependency installation may run in isolation within approved limits. New credentials, paid commitments and broader access need a user decision |
+| External actions | Staging happens autonomously within scope. Publication and other consequential external actions need authorization unless it was already granted |
+| Reuse | Persist versioned harnesses, tested tools, decision policies and explicit preferences. Project evidence stays within its project |
+| Verification trust | Generated verifiers only add checks. A fixed, non-generated verification floor compiled from the outcome contract is the root of trust |
+| Step isolation | Each step runs in a constrained harness with its own capability scope. Taint carried on artifacts enforces the Rule of Two across steps |
+| Untrusted ingress | All untrusted data enters through one fixed ingress service that does all retrieval. Tainted prose may feed only drafting steps that have no external-effect capabilities |
+| Egress | All outbound traffic passes through one identity-bound egress gateway. Each run has a closed set of destinations derived from the contract. A new destination needs a user decision |
+| Data labels | Data from connectors and uploads is private by default. Calls to model and decision providers are routed by confidentiality label |
+| Security screening | Decision models screen untrusted content as a first pass. They can tighten exposure but never grant capability or remove taint |
+| Design examples | A complete Texas grade 7 mathematics course delivered through an existing learning framework. A construction estimate from a supplied folder |
 
-The user-reported market-research failure is a product requirement: material about an audience representing roughly one percent of the stated TAM grew into approximately half the final report. L2 must distinguish evidence relevance from permission to change strategic emphasis. This brief does not claim to have reproduced that historical run.
+---
 
-## 3. Architectural model
+## 3. Core invariants
 
-L2 has a trusted control plane and an isolated execution plane. Generated code runs only in the execution plane. The factory is powerful application logic with model assistance; it has no special right to change permissions, agreements, or budgets.
+*Status: Established October 5, 2026. Reviewed one by one with Scott; invariant 3 was reworded at his direction.*
+
+Every subsystem in this brief exists to keep these true. Each one needs a deterministic test (section 18).
+
+1. **Generated code never runs in the control plane.** It runs only in isolated worker environments.
+2. **No capability without a grant.** Naming a capability in a spec does not confer it. Only the grant engine issues grants, and the factory cannot grant itself anything.
+3. **Spend is always committed against the currently approved budget.** Every paid operation is reserved first. The budget is not fixed. Any replan or redesign produces a re-forecast. If the re-forecast exceeds the approved budget, L2 proposes a budget revision. Approved revisions raise the budget, and reservations may then exceed the original estimate.
+4. **No untrusted path to an effect without a gate.** Every path from untrusted ingestion to an external-effect capability passes a declassification gate: typed extraction, a deterministic transform, or user approval.
+5. **Generated verifiers only add checks.** No acceptance criterion rests on a generated verifier alone.
+6. **No publication without hash-bound approval.** Approval binds to the artifact revision, the destination and the contract revision, and is re-checked at dispatch.
+7. **No destination outside the manifest.** The egress gateway contacts only destinations declared for the run.
+8. **Model output is never consent.** Silence, timeouts, preselected options and model recommendations do not count as user decisions.
+9. **No abandonment without the user.** L2 pauses and consults. It never quietly drops a step, lowers a requirement or ends a run.
+10. **Workers never write authoritative state.** The supervisor validates and commits every worker message against the expected revision and receipts.
+
+---
+
+## 4. Architecture
+
+*Status: Proposed*
+
+### Planes and components
+
+L2 has a trusted control plane and an isolated execution plane. The factory is ordinary application logic with model assistance. It has no special right to change permissions, agreements or budgets.
 
 ```mermaid
 flowchart TD
-    UI[Browser UI and API and CLI] --> CO[Consensus and run coordinator]
+    UI[Browser UI, API, CLI] --> CO[Consensus and run coordinator]
     CO --> FACT[Process and harness factory]
     CO --> RUN[Durable scheduler and supervisor]
-    FACT --> REG[Versioned capability registry]
-    FACT --> VAL[Harness validation and admission]
+    FACT --> REG[Versioned registry]
+    FACT --> VAL[Admission]
     VAL --> RUN
-    RUN --> BROKER[Execution and environment broker]
+    RUN --> BROKER[Environment broker]
     BROKER --> WORK[Isolated harness workers]
-    WORK --> GATE[Scoped capability gateway]
-    GATE --> MODEL[Generative and decision model adapters]
-    GATE --> CONN[Connector adapters]
+    WORK --> GATE[Capability gateway]
+    WORK --> INGRESS[Ingress service]
     WORK --> ART[Artifact and evidence service]
-    RUN --> STATE[Run state and event journal]
-    GATE --> BUDGET[Budget reservations and policy enforcement]
+    INGRESS --> CONN[Connector adapters]
+    INGRESS --> ART
+    GATE --> EGRESS[Egress gateway]
+    GATE --> BUDGET[Budget ledger and policy]
+    EGRESS --> MODEL[Model and decision adapters]
+    EGRESS --> CONN
     ART --> VERIFY[Verification service]
     VERIFY --> CO
     VERIFY --> FACT
+    RUN --> STATE[Run state and event journal]
 ```
 
-These are responsibility boundaries, not a requirement for a microservice per box. Proposed first deployment: a modular application, a durable database, artifact volumes, and a separately privileged execution broker. Model calls, verification, and connector work may run concurrently under one scheduler.
+The boxes are responsibility boundaries, not one microservice each.
 
-### Responsibility boundaries
-
-| Component | Owns | Must not do |
+| Component | Owns | Must not |
 | --- | --- | --- |
-| Consensus service | Outcome revisions, user decisions, unresolved material interpretations | Treat model recommendations or silence as user approval |
-| Factory | Process decomposition, harness synthesis, redesign proposals | Grant itself capabilities or revise agreed success conditions |
-| Supervisor | Scheduling, leases, checkpoints, cancellation, revisions | Trust worker claims of success without required receipts |
-| Capability gateway | Policy checks, scoped operations, usage accounting | Expose raw secrets or arbitrary privileged host operations |
-| Context service | Evidence selection, packet construction, lineage | Convert retrieved instructions into authority |
-| Verification service | Checks and verdicts against explicit contracts | Let the producer weaken the contract to obtain a pass |
-| Environment broker | Provisioning, limits, teardown, execution receipts | Accept unrestricted Docker or hypervisor commands from generated code |
-| Registry | Versioned components, evaluation evidence, applicability | Treat one successful run as universal validation |
+| Consensus service | Outcome revisions, user decisions, unresolved material interpretations, step consultations | Treat model recommendations or silence as approval |
+| Factory | Process decomposition, harness design for every step, redesign proposals | Grant itself capabilities or revise agreed success conditions |
+| Admission | Validating specs, generated code, verifiers and plan-level properties before activation | Admit on the factory's word or on fixtures the factory alone wrote |
+| Supervisor | Scheduling, leases, checkpoints, cancellation, revisions, failure counting | Trust a worker's claim of success without the required receipts |
+| Capability gateway | Policy checks, scoped operations, usage accounting | Expose raw secrets or privileged host operations |
+| Ingress service | Retrieval, normalization, screening, quarantined extraction, taint and confidentiality labels | Pass untrusted text as trusted, reveal screening verdicts, or accept schemas the runtime has not validated |
+| Egress gateway | Outbound requests, attaching credentials, enforcing the destination manifest, label checks | Attach foreign credentials, contact undeclared destinations, or send private-lineage data to uncleared destinations |
+| Context service | Evidence selection, packet construction, lineage | Turn retrieved instructions into authority |
+| Verification service | Checks and verdicts against explicit contracts | Let a producer weaken the contract to get a pass |
+| Environment broker | Provisioning, limits, teardown, execution receipts | Accept arbitrary container or hypervisor commands from generated code |
+| Registry | Versioned components, evaluation evidence, applicability | Treat one successful run as general validation |
 
-## 4. Contracts and durable records
+### Deployment view
 
-Use typed, versioned contracts at all boundaries. JSON is a proposed transport representation, not a commitment to a particular implementation language. Large content belongs in referenced artifacts rather than nested state payloads.
+```mermaid
+flowchart LR
+    subgraph Host["Host (Linux baseline; Docker Desktop validated separately)"]
+        subgraph Core["Core container: non-root"]
+            APP[Control plane: coordinator, factory, admission, supervisor, context, verification, ledger, UI and API]
+        end
+        DB[(PostgreSQL)]
+        AS[(Content-addressed artifact store)]
+        subgraph Perimeter["Perimeter services: separate processes"]
+            IN[Ingress service]
+            EG[Egress gateway + registry proxy + DNS]
+            VAULT[Credential service]
+        end
+        BR[Environment broker: minimal typed API, root-equivalent]
+        subgraph Workers["Worker pool: no network stack"]
+            W1[Restricted tier: gVisor candidate]
+            W2[VM tier]
+        end
+    end
+    EXT[(External services, model providers, web)]
+    APP --- DB
+    APP --- AS
+    APP --> BR
+    BR --> Workers
+    Workers -->|mediated requests| APP
+    APP --> IN
+    APP --> EG
+    IN --> EXT
+    EG --> EXT
+    EG --- VAULT
+```
+
+Proposed: ingress, egress and the credential service run as separate processes with their own privileges. A compromise of the control plane would then not hand over credentials or raw network access. Section 21 tracks this as an open decision against running them as modules inside the core. Workers reach every other component only through the mediated runtime interface.
+
+### Key interfaces
+
+These are the boundaries that need specs before implementation. The harness runtime protocol matters most, because it carries the security model.
+
+| Interface | Between | Carries |
+| --- | --- | --- |
+| Harness runtime protocol | Worker ↔ supervisor and gateway | Observe evidence, request operations, submit artifacts, checkpoint, propose questions or redesigns, finish with evidence |
+| Ingress record | Ingress → context and artifact services | Source, hash, normalization findings, labels, typed fields, excerpts with span references |
+| Egress request | Gateway → egress | Destination, payload reference, label, credential binding, idempotency key |
+| Decision service | Any control-plane component → decision adapters | Policy, state, typed result, distribution, receipt |
+| Connector manifest | Connector → registry | Operations, schemas, side-effect class, labels, scopes, idempotency, cost |
+| API and CLI | Clients → coordinator | Runs, contracts, questions, budgets, artifacts, harness revisions, connectors, events. Idempotency and expected-revision fields on every mutation |
+
+### Contracts and records
+
+Every boundary uses typed, versioned contracts. Large content lives in referenced artifacts, not nested state.
 
 | Record | Essential contents |
 | --- | --- |
-| OutcomeContract | Goal, audience, deliverables, scope and exclusions, priorities, acceptance criteria, uncertainty expectations, publication authority, originating user decisions, revision |
-| ProcessPlan | Nodes and dependencies, input/output contracts, provisional harness needs, checkpoints, completion requirements, cost estimate, revision |
-| HarnessSpec | Objective, observations, execution entry point or graph, capabilities, environment, context policy, decisions, verifiers, recovery, resource limits, checkpoint schema, dependency hashes |
-| HarnessAdmission | Spec hash, checks performed, fixture results, permission ceiling, permitted operating mode, residual limitations |
-| DecisionPolicy | Question, output type, state requirements, applicable domain, provider/version, calibration reference, thresholds, consequences, uncertainty and outage behavior |
-| DecisionReceipt | Policy/version, input references, raw typed result, available probabilities, provider-specific confidence, selected action, timing, usage, escalation |
-| ContextPacket | Contract revision, objective, admitted excerpts, artifact references, contradictions, open issues, source lineage, token accounting, omitted evidence index |
-| UserDecision | Question, distinct options, recommendation and rationale, consequences, typed response, normalized interpretation, affected work, author and time |
-| BudgetRevision | Estimate range, authorized ceiling, inclusions, reservations, forecast assumptions, user approval, currency, revision |
-| ArtifactRevision | Content hash, media type, producer attempt, input lineage, contract revision, verification receipts, status, retention |
+| OutcomeContract | Goal, audience, deliverables, scope and exclusions, priorities as an emphasis allocation, acceptance criteria, uncertainty expectations, publication authority, originating decisions, revision |
+| ProcessPlan | Nodes and dependencies, input and output contracts, harness assignments, declassification gates, destination manifest reference, checkpoints, completion requirements, cost estimate, revision |
+| HarnessSpec | Objective, observations, entry point or graph, capabilities, environment, context policy, decisions, verifiers, recovery, resource limits, checkpoint schema, dependency hashes |
+| HarnessAdmission | Spec hash, checks performed, fixture results, permission ceiling, operating mode, residual limitations |
+| DecisionPolicy | Question, output type, required state, domain, provider and version, calibration reference, thresholds, consequences, uncertainty and outage behavior |
+| DecisionReceipt | Policy and version, input references, typed result, distribution, provider confidence, selected action, timing, usage, escalation |
+| ContextPacket | Contract revision, objective, excerpts, artifact references, contradictions, open issues, lineage, taint labels, agreement hashes, token accounting, omitted-evidence index |
+| UserDecision | Question, distinct options, recommendation and rationale, consequences, typed response, normalized interpretation, affected work, author, time |
+| StepConsultation | Failing node, attempts and failure evidence, approaches tried, proposed re-adaptation paths with costs, user decision |
+| MemoryRecord | Kind (decision, fact, preference, open question, artifact reference, summarized tool result), content or reference, source and lineage, taint and confidentiality labels, created and superseded-by, project scope |
+| BudgetRevision | Estimate range, authorized ceiling, inclusions, reservations, forecast assumptions, approval, currency, revision |
+| ArtifactRevision | Content hash, media type, producer attempt, lineage, taint and confidentiality labels, contract revision, verification receipts, status, retention |
+| IngressRecord | Source, content hash, retrieval time, parser version, normalization findings, labels, typed fields, excerpts with span references, screening receipt reference (never shown to harnesses) |
+| DestinationManifest | Closed set of external destinations for the run, each with provenance and permitted labels, revision |
 | CapabilityGrant | Run and attempt, permitted operation and resources, expiry, limits, connection binding, approval reference |
-| ExecutionAttempt | Spec and input hashes, lease and generation, environment receipt, checkpoint, action receipts, usage, terminal result |
+| ExecutionAttempt | Spec and input hashes, lease and generation, environment receipt, checkpoint, action receipts, usage, result |
 
-A decision-model result and a user decision are distinct record types. A high-confidence model prediction cannot become a user agreement.
+A decision-model result and a user decision are different record types. However confident a prediction is, it never becomes an agreement.
 
-### Proposed harness interface
+A harness can run arbitrary generated logic inside its environment. Everything that crosses the boundary goes through the runtime protocol. Checkpoints happen at mediated action boundaries and at explicit worker checkpoints. Arbitrary machine state is not promised to be resumable.
 
-A harness consumes an objective, approved contracts, immutable input references, and a scoped runtime client. It emits checkpoints, artifacts, observations, and requests for action, clarification, or redesign. It may produce arbitrary generated execution logic inside its environment, but mediated operations use a small runtime interface:
-
-- Observe or retrieve authorized evidence.
-- Request an approved tool, connector, model, or environment operation.
-- Submit an artifact revision and request verification.
-- Persist a checkpoint and progress evidence.
-- Propose a user question, harness replacement, process revision, or budget change.
-- Finish with artifact references and completion evidence.
-
-Workers do not directly write authoritative run state. The supervisor validates and commits their messages. Custom execution graphs and loops remain possible; checkpoints occur at mediated action boundaries and at explicit worker checkpoints. Arbitrary machine state is not promised to be resumable.
-
-### Illustrative synthesized harness
-
-The following is a proposed L2 specification fragment, not a provider API or finalized schema. It describes a generic comparison experiment that could serve software compatibility, analytical methods, or competing artifact designs.
+The fragment below illustrates a HarnessSpec. It is not a final schema. The runtime resolves and pins every reference before admission. Naming a capability does not grant it.
 
 ```yaml
 spec_version: 1
 objective_ref: outcome/current/comparison
-inputs:
-  baseline: artifact_ref
-  candidate: artifact_ref
-  cases: artifact_ref
-execution:
-  entrypoint: generated_compare.py
-  code_ref: artifact_ref
-  checkpoint_schema_ref: schema_ref
-capabilities:
-  - execute_case
-  - read_evidence
-  - request_model
-environment:
-  class: disposable_vm
-  manifest_ref: artifact_ref
-context:
-  policy_ref: comparison_context_v1
-decisions:
-  discrepancy_kind: policy_ref
+inputs: { baseline: artifact_ref, candidate: artifact_ref, cases: artifact_ref }
+execution: { entrypoint: generated_compare.py, code_ref: artifact_ref, checkpoint_schema_ref: schema_ref }
+capabilities: [execute_case, read_evidence, request_model]
+environment: { class: disposable_vm, network: none, manifest_ref: artifact_ref }
+context: { policy_ref: comparison_context_v1 }
+decisions: { discrepancy_kind: policy_ref }
 verification:
-  - criterion_ref: outcome/current/behavioral_equivalence
-    verifier_ref: independent_comparison_verifier
-recovery:
-  retry_limit: 2
-  on_no_progress: request_harness_redesign
-resources:
-  budget_allocation_ref: approved_allocation_ref
-  environment_lease_ref: approved_lease_ref
-outputs:
-  observations: structured_artifact
-  comparison_report: document_artifact
+  - { criterion_ref: outcome/current/behavioral_equivalence, verifier_ref: independent_comparison_verifier }
+recovery: { retry_limit: 2, on_repeated_invalid_output: consult_user }
+resources: { budget_allocation_ref: approved_allocation_ref, environment_lease_ref: approved_lease_ref }
+outputs: { observations: structured_artifact, comparison_report: document_artifact }
 ```
 
-The runtime resolves and pins every reference before admission. The generated program can introduce new analytical logic; it cannot resolve an unapproved capability merely by naming it. Retry counts here are illustrative and must fit the run's policy.
+---
 
-## 5. Synthesis and adaptation lifecycle
+## 5. Security perimeter
 
-1. **Intake:** identify supplied materials, existing agreements, known constraints, and missing capabilities. Preserve the original request.
-2. **Bounded discovery:** inspect enough to propose scope, feasible approaches, major decisions, and a budget. Use an explicitly configured discovery allowance or obtain one before paid discovery.
-3. **Consensus:** resolve material choices and establish the initial outcome contract and authorized spending ceiling. A declined estimate leads to revision or an orderly stop.
-4. **Process design:** propose dependencies and completion evidence. Keep uncertain downstream harness designs provisional.
-5. **Harness synthesis:** reuse suitable evaluated components or generate missing logic, tools, verifiers, and environments. Full synthesis is supported from the first complete vertical slice.
-6. **Admission:** validate contracts, capabilities, budget bounds, checkpoint behavior, and generated components before activation.
-7. **Execution:** run eligible nodes with isolated attempts and explicit artifact handoffs.
-8. **Continuous review:** inspect correctness, evidence gaps, progress, scope alignment, and budget forecasts at meaningful boundaries.
-9. **Adaptation:** repair locally, redesign the harness, replan the process, or seek user input according to the nature of the failure.
-10. **Integration:** verify the assembled deliverable against the outcome contract and its overall balance; prepare a reviewable staged result.
-11. **Delivery:** publish only within recorded authority; preserve receipts, limitations, costs, and reuse candidates.
+*Status: Established decisions; mechanisms Proposed. The full catalogue is in [L2-SECURITY-THREATS.md](L2-SECURITY-THREATS.md).*
 
-### Three adaptation levels
+This section is the single source for security rules. Other sections refer back to it rather than repeating them.
+
+### Position
+
+Published work is consistent on two points:
+
+- Detectors and prompt-level defenses fall to adaptive attackers, usually at attack success rates above 90%.
+- The defenses with a principled argument are deterministic and out-of-band: capability grants, information-flow labels, isolation and controlled egress. They cost utility, and only one has been independently tested against adaptive attacks.
+
+L2 therefore treats boundaries the model cannot reach as its security. Screening is telemetry that raises the attacker's cost.
+
+L2 also adds attack surfaces of its own. The factory reads untrusted evidence and then writes code. Generated verifiers can be gamed. Registry reuse lets a poisoned component persist. A synthesized process graph can assemble the lethal trifecta across steps even when every individual step is clean.
+
+### The perimeter
+
+| Layer | Mechanism | Defends against |
+| --- | --- | --- |
+| Ingress | One fixed service does all retrieval. Workers have no network stack. Content is normalized deterministically, screened, extracted by a quarantined model with no tools or egress, and labelled | Direct and hidden injection, generated code bypassing the perimeter, poisoned connector content |
+| Typed and prose lanes | Typed fields (enums, numbers, dates, bounded strings, span references) can be declassified under rules the runtime validates. Prose stays tainted and feeds only drafting steps that have no effect capabilities | Injected instructions reaching action parameters |
+| Step isolation | Capability scope per step. Taint follows artifact lineage. At plan time, every untrusted-to-effect path must pass a gate | Laundering across steps; the lethal trifecta assembled across a pipeline |
+| Factory admission | Clean-room differential synthesis, capability inference, the fixed verification floor, taint carried into the registry | Instructions smuggled into generated harnesses, verifier gaming, persistent poisoned components |
+| Context integrity | Agreement-hash audit before every model call; contracted emphasis allocation | Compaction and eviction attacks; emphasis drift from volume poisoning |
+| Egress | Identity-bound gateway, closed destination manifest per run, label-flow checks, content matching after decoding, inert rendering, provider routing by label | Exfiltration over network, DNS, rendering, approved domains, connector writes and provider endpoints |
+| Approvals | Rendered by the control plane, bound to hashes, re-checked at dispatch, model text confined to a labelled panel | Forged dialogs, approval fatigue, truncated arguments |
+| Resource controls | Reserve-and-settle ledger, deviation from the per-step forecast, per-item screening budgets | Denial of wallet, amplification, denial of service against guardrails |
+| Execution isolation | Minimal typed broker API, gVisor or VM tiers, registry proxy for dependencies | Sandbox escape, misuse of the broker, slopsquatting and malicious packages |
+
+### Rules that span subsystems
+
+- **Labels.** Every ingress record and artifact carries two labels:
+  - an integrity label (taint);
+  - a confidentiality label: private, project or public.
+
+  Data from connectors and uploads is private by default. Public web retrieval is public. A payload's labels are computed from its lineage.
+- **Schemas decide declassification, and the runtime checks them.** The factory may design an extraction schema for each step, but fixed runtime rules validate it. The rules include:
+  - No long free text may flow into an action parameter.
+  - Enum values for effect parameters come from the contract or the user's own answers.
+  - Recipients, destinations and URLs come from trusted sources only.
+- **Screening only tightens.** A decision-model screen can quarantine or block content. It can never remove taint or grant a capability. Verdicts are not shown to the harness being screened. If screening fails or overruns its budget, the item is quarantined. Section 7 covers the screening design.
+- **Destinations are closed per run.** The process plan derives a DestinationManifest from the contract and the user's answers. Adding a destination during a run requires a consensus question.
+- **Providers are routed by label.** Private data goes only to model and decision providers cleared for it, which can include local models. This doubles as data-residency control for Canadian deployments under PIPEDA and provincial law such as Alberta's PIPA.
+- **Credentials stay with the gateway.** Workers never hold provider credentials. The gateway attaches only credentials it issued and rejects any request that carries foreign ones.
+
+### Accepted residual risk
+
+Two risks can be reduced but not eliminated:
+
+- low-bandwidth covert channels, such as word choice or timing in legitimate output;
+- careless approval of a deliverable that contains private data.
+
+Bandwidth limits, label checks and approvals that show diffs reduce both.
+
+### Candidate contributions
+
+Three detection methods appear novel in the form L2 can implement them:
+
+- clean-room differential synthesis;
+- contracted emphasis allocation;
+- anomaly detection based on deviation from the forecast.
+
+The rest build on published work, and the companion document credits it. Any novelty claim needs a full literature review before publication.
+
+---
+
+## 6. Run lifecycle
+
+*Status: termination and synthesis policy Established; the rest Proposed*
+
+### Walkthrough
+
+One run from intake to delivery.
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant CO as Coordinator and consensus
+    participant F as Factory
+    participant A as Admission
+    participant S as Supervisor
+    participant W as Harness worker
+    participant I as Ingress
+    participant G as Gateway and egress
+    participant V as Verification
+    U->>CO: Challenge and materials
+    CO->>I: Bounded discovery retrieval
+    I-->>CO: Labelled ingress records
+    CO->>U: Material questions, budget estimate
+    U-->>CO: Answers, ceiling approved
+    CO->>F: OutcomeContract
+    F-->>CO: ProcessPlan, destination manifest
+    F->>A: Designed harness per step
+    A-->>S: Admitted specs and grants
+    S->>W: Lease attempt
+    W->>I: Request evidence
+    I-->>W: Typed fields / tainted prose
+    W->>G: Request model or connector operation
+    G-->>W: Result (reserved, metered, label-checked)
+    W->>S: Artifact and checkpoint
+    S->>V: Verify against floor + generated checks
+    V-->>S: Pass, fail, inconclusive or verifier error
+    alt Repeated invalid output
+        S->>CO: StepConsultation
+        CO->>U: Re-adaptation paths with costs
+        U-->>CO: Chosen path
+        CO->>F: Redesign or replan
+    end
+    S->>V: Integration check (allocation, balance)
+    CO->>U: Staged deliverable, diff and destination
+    U-->>CO: Hash-bound approval
+    CO->>G: Publish (re-checked at dispatch)
+```
+
+### Stages
+
+1. **Intake.** Identify supplied materials, existing agreements, constraints and missing capabilities. Preserve the original request.
+2. **Bounded discovery.** Inspect enough to propose scope, approaches, major decisions and a budget. Paid discovery uses a configured allowance or asks for one first.
+3. **Consensus.** Resolve material choices. Establish the outcome contract, its emphasis allocation and the authorized ceiling. If the user declines the estimate, revise or stop in an orderly way.
+4. **Process design.** Propose dependencies and completion evidence. Derive the destination manifest and the declassification gates.
+5. **Harness design.** Design a harness for every step (see the synthesis policy below).
+6. **Admission.** Validate each spec, the generated code and the generated verifiers. Check the plan-level information-flow and destination properties.
+7. **Execution.** Run eligible steps as isolated attempts with explicit artifact handoffs.
+8. **Continuous review.** Check correctness, evidence gaps, progress, scope alignment and the budget forecast at meaningful boundaries.
+9. **Adaptation.** Repair, redesign, replan or consult, depending on the failure.
+10. **Integration.** Verify the assembled deliverable against the contract, including its overall balance. Prepare a staged result for review.
+11. **Delivery.** Publish only within recorded authority. Keep receipts, limitations, costs and reuse candidates.
+
+### Synthesis policy
+
+*Established: every step gets a designed harness.*
+
+The factory produces an explicit HarnessSpec for every node in the process plan, and each one goes through admission. Designing a harness does not mean writing it from scratch. The factory assembles it from evaluated registry components and the shipped capability catalog where they fit, and generates new logic, tools and verifiers only where they don't.
+
+Proposed refinement: nodes instantiated from one template may share one admitted design, instantiated per node. An example is one node per lesson in a 40-lesson course. Without this, design and admission costs grow with the number of steps.
+
+This policy gives the most tailoring and the highest cold-start cost. Discovery estimates must include factory design and admission work, and the cost of each design is tracked separately so the economics can be measured (section 20).
+
+The factory starts from a shipped, versioned design protocol and capability catalog. Replacing the trusted runtime or its enforcement policy is a software upgrade, not in-run adaptation. That gives full synthesis a finite bootstrap boundary. The factory cannot create unrestricted factories.
+
+### Adaptation levels
 
 | Level | Example | Required controls |
 | --- | --- | --- |
-| Local repair | Retry a transient request or correct a malformed artifact | Bounded attempts, same contract, progress evidence |
+| Local repair | Retry a transient failure or fix a malformed artifact | Bounded attempts, same contract, evidence of progress |
 | Harness redesign | Replace speculative analysis with a runnable experiment | New spec revision and admission, budget reservation, input compatibility |
-| Process replan | Add investigation after contradictory evidence invalidates a dependency | Impact analysis, dependency revision, stale-output invalidation, consensus if outcomes change |
+| Process replan | Add investigation after contradictory evidence invalidates a dependency | Impact analysis, dependency revision, invalidation of stale outputs, consensus if outcomes change |
 
-Every redesign names the failed hypothesis, supporting observations, expected improvement, and maximum additional expenditure. Repeated attempts with unchanged failure fingerprints and no progress trigger escalation, not endless variation. The factory itself is subject to budgets, timeouts, and convergence checks; it cannot recursively create unrestricted factories.
+Every redesign states the failed hypothesis, the supporting observations, the expected improvement and the maximum additional spend.
 
-The factory starts from a shipped, versioned design protocol and capability catalog. It can generate its own supporting analysis tools under the same admission rules. Replacing the trusted runtime or its enforcement policy is a software upgrade, not ordinary in-run adaptation. This gives full harness synthesis a finite bootstrap boundary.
+### Consultation instead of termination
 
-When a contract or input changes, the coordinator identifies affected artifacts and descendants. Unaffected work may continue. Affected attempts are fenced from promotion until checked or restarted against the new revision. Cancellation and late results are recorded; a late worker cannot overwrite a newer accepted result.
+*Established: the user is consulted before anything is abandoned.*
 
-### Generated harness admission
+A step's output is valid when it passes admission checks and the verification floor for its criteria. The supervisor counts consecutive invalid outputs per step across repair and redesign attempts. It does not rely only on failure fingerprints, because an attacker or a flailing model can vary those indefinitely.
 
-Admission includes schema and dependency validation, allowed capability checks, bounded execution, missing-input behavior, timeout and cancellation tests, artifact path isolation, and success/failure fixture cases. Generated verifiers receive known-valid and known-invalid inputs, including cases the producer did not create. A reviewer examines whether the verifier actually tests the acceptance criterion.
+When the count reaches the step's threshold (proposed default: three invalid outputs across at least two distinct approaches), the step pauses and opens a **StepConsultation**. The same happens when factory nesting depth or a redesign cap is reached. The consultation shows:
 
-Passing fixtures is evidence, not a proof of arbitrary code correctness. New semantic policies begin in advisory or constrained operation where warranted. For an unvalidated material judgment, obtain stronger review or preserve uncertainty rather than manufacturing certainty. L2 can introduce novel logic during a run without allowing it to bypass the runtime's invariants.
+- what was tried and the evidence for each failure;
+- distinct re-adaptation paths, each with a cost estimate:
+  - a new approach the factory proposes;
+  - a revised step or scope;
+  - accepting a partial or degraded result, with the gap stated in the deliverable;
+  - skipping the step with a documented gap;
+  - stopping the run;
+- the work that is blocked and the work that can carry on.
 
-## 6. Consensus and prevention of scope drift
+Independent steps keep running while one step waits. Headless runs pause and notify.
 
-The clarification test is counterfactual: would plausible responses lead to materially different outputs, and are the offered responses meaningfully different? Material effects include audience, emphasis, exclusions, deliverable form, success criteria, cost, timing, and external commitments.
+Consultation is a design choice, not a cost to minimize. Consultation leads to consensus on expectations, and consensus on expectations leads to higher quality. Consultation counts are tracked so the thresholds can be tuned, not as a target to drive down.
 
-Before asking, the system checks whether the answer is already established or can be discovered from authorized evidence. Questions should not outsource ordinary research or repeat previous agreements. A question can have two paths; L2 must not invent a third equivalent option for presentation symmetry. A necessary factual clarification may be free text without artificial choices.
+L2 ends a run only on a user decision, or when the hard budget ceiling is reached with no approved increase. Even then, a forecast-triggered budget question comes first (section 13).
 
-The question payload includes the unresolved issue, evidence, distinct paths, recommendation, rationale, consequences, affected nodes, and whether independent work can continue. Typed responses are preserved verbatim. If normalization would materially change their meaning, clarify that interpretation; do not require another confirmation of an already clear answer. No response, a preselected option, or an elapsed timeout is approval.
+### Change and fencing
 
-### Evidence and authority remain separate
+When a contract or an input changes, the coordinator identifies the affected artifacts and their descendants. Unaffected work continues. Affected attempts are fenced from promotion until they are checked or restarted against the new revision. Late results are recorded, but a late worker cannot overwrite a newer accepted result.
 
-Maintain distinct categories for user agreements, observed evidence, provisional interpretations, and proposals. A source can support a fact without supporting a change in strategy. An accepted user preference can govern emphasis without making a factual claim true. New evidence that contradicts an agreement's factual premise should reopen the issue with the user rather than be suppressed.
+### Admission
 
-The context service retains applicable agreements in every execution and review packet. Outstanding material assumptions block work that depends on them. Routine reversible execution choices can proceed under the agreed policy and remain inspectable without demanding user attention.
+Admission covers:
 
-### Market research regression case
+- schema and dependency validation;
+- allowed-capability checks;
+- bounded execution;
+- behavior on missing inputs;
+- timeout and cancellation tests;
+- artifact path isolation;
+- success and failure fixtures.
 
-Construct a fixture with a broad-market request, an explicitly supplied small segment share, and a retrieved collection disproportionately discussing that segment. L2 must not infer priority from document frequency. It should preserve the agreed emphasis, seek broader evidence if needed, and ask only when a substantive strategic alternative deserves a decision.
+Generated verifiers are tested on known-valid and known-invalid inputs, including cases the producer did not create. They can only add to the fixed floor.
 
-Check scope at outline formation, evidence aggregation, section drafting, and final integration. Inspect semantic emphasis and recommendations, not only word count. Market share is not a mandatory space allocation formula: disproportionate emphasis can be justified by explicit strategy or obligations, but that rationale must be established.
+Some harnesses are designed while tainted evidence is in the factory's context. Admitting one of these also requires two checks:
 
-The same test applies to test-preparation material taking over a general mathematics course, or a construction estimate silently substituting premium materials. Individually correct outputs can still form an invalid whole.
+- **Clean-room differential synthesis.** A second design is produced with the evidence withheld, and the two are compared on capabilities and data flow. Behavior that appears only in the evidence-informed design is flagged and attributed to the evidence that caused it.
+- **Static capability inference.** The capabilities the generated code actually uses must match the declared capabilities.
 
-## 7. Decision models as a shared runtime capability
+Components designed under taint keep that taint in the registry.
 
-### Documented capabilities and limits
+Passing fixtures is evidence, not proof of correctness. New semantic policies start in advisory or constrained mode where warranted. An unvalidated material judgment gets stronger review, or its uncertainty is preserved instead of turned into false certainty.
 
-TypeSafe documents Jev as evaluating typed questions against supplied state. Choice and Score return distributions and confidence; Noul returns a yes probability. It supports independent questions against shared state and recommends narrow judgments composed in code. These capabilities support the proposed decision service; they do not establish L2's workload accuracy. [TypeSafe introduction](https://docs.typesafe.ai/introduction)
+---
 
-Jev's confidence is derived from its distribution and differs by question type. It is not an interchangeable probability of correctness. L2 must retain distributions and provider semantics and evaluate thresholds on representative data. [TypeSafe confidence](https://docs.typesafe.ai/confidence)
+## 7. Decision models
 
-OpenAI's September 29 announcement describes Decisions API as Luna-based finite-answer judgments from text or images, initially in limited preview. The reviewed material does not establish a complete public API schema, calibrated probabilities, pricing, or current account access. An OpenAI adapter is a planned integration pending those checks; L2 must not invent an endpoint or assume Jev parity. [OpenAI announcement](https://openai.com/index/devday-2026-recap/)
+*Status: Established as a core capability. Specific uses are Proposed until measured. Provider notes and calibration procedure are in [L2-DECISION-MODELS.md](L2-DECISION-MODELS.md).*
 
-TypeSafe's published speed and cost comparisons are vendor results with disclosed evaluation caveats. The architectural hypothesis is that frequent narrow judgments improve total economics; no advertised multiplier is an L2 forecast. [TypeSafe launch analysis](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
+Decision models are one of the newer pieces of L2, and possibly one of its larger economic levers. They don't generate text. They evaluate a typed question against supplied state and return a structured answer, usually with a probability distribution: a choice from a list, a score on a rubric, or a yes probability.
 
-### Decision service contract
+A frontier model can make the same judgments, but it is slower, costs more and is harder to calibrate. If a harness can delegate its many small judgments to fast, typed decisions, it can afford to check far more often. It can ask whether a passage fills a gap, whether a claim is supported, whether a step is still making progress, or whether a proposed action fits the contract. The frontier model then does the work only it can do.
 
-The service advertises actual provider capabilities: supported input modalities and typed results, maximum state and option sizes, distributions when available, version pinning, batch behavior, latency observations, and usage reporting. Unsupported fields remain absent. A generative fallback records a different backend and cannot inherit another model's calibration.
+That is the hypothesis. This section explains where it might pay off and how L2 finds out.
 
-Every policy identifies its question, candidate universe or rubric, required evidence, contract revision, allowed actions, uncertainty route, and validation history. Where relevant, include insufficient-evidence or none-of-the-above outcomes. If a provider cannot express these natively, the surrounding policy must detect insufficiency before making the choice actionable.
+### Principles
 
-Decision responses need not contain prose reasons. A receipt can retain the state, selected evidence IDs, probabilities, and applied rule. If an explanation is needed, a generative model may explain that record; label this as a subsequent explanation, not the decision model's hidden reasoning.
+1. **Narrow and atomic.** Ask one bounded question at a time and combine the answers in code. Compound judgments ("is this report good?") are decomposed.
+2. **Advisory, never authoritative.** Permissions, arithmetic, hard budget limits and hard requirements stay deterministic. A decision can route, rank, flag or escalate. It cannot grant, pass or consent.
+3. **Receipts, not reasons.** Every decision writes a receipt with its state references, typed result, distribution and the rule applied. If someone needs an explanation, a generative model can explain the receipt, labelled as a later explanation and not as the decision model's reasoning.
+4. **Insufficiency is an answer.** Policies include "insufficient evidence" or "none of the above" outcomes where they fit. If a provider can't express that natively, the surrounding policy detects insufficiency before acting.
+5. **Confidence is provider-specific.** A provider's confidence score is not a probability of being correct, and it means different things for different question types. L2 keeps raw distributions, never multiplies confidences across dependent decisions, and sets thresholds on representative data.
+6. **Measured before trusted.** Every use is compared with four alternatives: code, existing retrieval, a frontier judgment, and skipping the check altogether. A use stays only if it improves cost per accepted outcome.
 
-### Opportunity analysis
+### Decision service
 
-The following are proposed uses, not claims of measured effectiveness. Each must be compared with code, existing retrieval methods, a generative judgment, and omission of the check. Permissions, arithmetic invariants, and hard budget enforcement stay deterministic.
+The service is the only path from any control-plane component to decision providers. It advertises each provider's actual capabilities:
 
-| Decision area | Required input and bounded judgment | Action and expected value | Error or uncertainty response |
-| --- | --- | --- | --- |
-| Material clarification | Request, agreements, candidate alternatives; do answers change deliverables? | Surface consequential choices before production | Escalate ambiguous material cases; sample suppressed questions for missed assumptions |
-| Option quality | Proposed question and effects of each option; are paths distinct? | Remove cosmetic alternatives and reduce question fatigue | Ask a focused free-text question rather than forcing a menu |
-| Task decomposition | Proposed step and capability descriptions; is there a missing prerequisite? | Flag candidate plan defects for the planner | Validate topology in code; use frontier reasoning for complex dependencies |
-| Component selection | Objective plus retrieved registry candidates; which fits declared conditions? | Reuse evaluated components and avoid unnecessary synthesis | None fits leads to synthesis; do not force a near match |
-| Environment selection | Operations and resource requirements; which permitted class is suitable? | Suggest adequate isolation and compute | Runtime minimum isolation rules override the recommendation |
-| Tool exposure | Current objective and tool shortlist; which capabilities are relevant now? | Reduce prompt tool overhead | Keep discovery available; no semantic filter may grant new permissions |
-| Retrieval triage | Question, passage, source metadata; does it address an evidence gap? | Admit promising evidence before expensive synthesis | Keep excluded originals and sample false exclusions |
-| Novelty | Candidate and existing claim index; is this new information? | Reduce repeated material | Preserve independent corroboration and conflicting findings |
-| Source suitability | Claim type, provenance, dates, publisher information | Route uncertain sources for corroboration | Missing metadata stays unknown; relevance does not establish credibility |
-| Contradiction detection | Claims with dates, units, scope, and sources | Trigger reconciliation or further retrieval | Do not discard disagreement because it conflicts with a draft |
-| Context sufficiency | Objective, prerequisites, packet and omitted index | Detect missing inputs before a costly model call | Expand retrieval or mark the step blocked; repeated checks are bounded |
-| Context balance | Agreements and representation across a packet | Detect evidence concentration becoming implied priority | Broaden evidence or request consensus; no demographic quotas inferred |
-| Summary fidelity | Summary and referenced source spans | Catch omissions and unsupported additions after compaction | Restore excerpts or regenerate with stronger review |
-| Tool outcome triage | Expected result, structured receipt, relevant output | Select retry, repair, new method, or investigation | Transport/auth errors handled directly; unclear causes route to diagnosis |
-| Progress assessment | Recent artifacts, failure fingerprints, acceptance gaps | Stop loops without measurable improvement | Deterministic attempt ceilings remain authoritative |
-| Extraction checks | Proposed structured fields and source spans | Route only uncertain records to expensive extraction | Arithmetic, units, and schema checks remain executable |
-| Claim support | Claim and exact source context | Catch citation mismatch before finalization | Unknown support prompts retrieval or qualified output, not a fabricated citation |
-| Semantic acceptance | One criterion, artifact slice, required evidence | Run frequent checks near production | Material or novel cases receive stronger independent verification |
-| Visual and media review | Relevant frames/audio or validated representations | Detect selected defects before expensive final assembly | Require native modality support; transcripts cannot prove visual correctness |
-| Repair versus redesign | Failed criterion, attempts, environment and progress | Choose which adaptation level to propose | Factory reviews uncertain or high-impact structural changes |
-| Scope change | Proposed action and outcome contract | Detect consequential interpretation drift | Hold dependent work and present distinct paths to the user |
-| Spending prioritization | Remaining gaps, candidate actions, measured costs | Inform expected-value ranking | User-approved priorities and hard ceilings dominate the recommendation |
-| Integration review | Requirement map and assembled artifacts | Detect overlap, contradictions, imbalance, missing handoffs | Reopen affected steps; preserve passed artifacts where still applicable |
-| Reuse promotion | Run receipts and held-out evaluations | Identify candidates for future reuse | Promotion needs validation; no self-certification by the authoring model |
+- input modalities and typed result kinds;
+- maximum state and option sizes;
+- whether distributions are available;
+- version pinning;
+- batch behavior;
+- observed latency;
+- usage reporting.
 
-### Context pipeline in detail
+Unsupported fields stay absent. If a frontier model is used as a fallback, the receipt records a different backend and the fallback does not inherit the other model's calibration.
 
-1. Store original assets with hashes, origin, retrieval time, permissions, and parser version. Preserve page, row, timestamp, or span locations.
-2. Perform inexpensive structural extraction, exact duplicate checks, and candidate retrieval. Treat search snippets as discovery rather than complete source evidence.
-3. Apply focused judgments to candidate passages using the current evidence gaps and outcome contract. Evaluate relevance, novelty, support, and contradiction separately.
-4. Admit excerpts or commission extraction/summarization only where justified. A typed decision model selects or evaluates content; it is not assumed to generate arbitrary summaries.
-5. Assemble a packet containing applicable agreements, the step's objective, evidence, counterevidence, unresolved questions, and enough operational state to execute correctly.
-6. Check coverage and balance across the packet. A collection of individually relevant passages may still omit an essential perspective or prerequisite.
-7. Account for the full model request, including instructions, tools, attachments, history, and output reserve. Preserve valid tool-call/result relationships. If protected material cannot fit, split the task or change the model rather than silently dropping agreements.
-8. Record the packet hash and admission decisions. The worker can retrieve originals or request more context. Exclusion from a packet does not delete an asset.
+Policies follow a lifecycle: experimental, shadow, advisory, active, retired. Shadow decisions are logged but never control execution. Revalidation is required whenever the question, rubric, provider version, input distribution or consequences change. If a provider is down, the declared fallback runs or the branch pauses. An outage never produces a silent pass.
 
-Selection is stage-specific: a passage unnecessary for drafting may be essential for verification. Reviewer retrieval must not depend exclusively on the producer's selected context. A user correction invalidates affected packet caches. Summaries retain derivation links and cannot outrank their sources.
+Decision calls are also outbound data flows. They go through the egress gateway and are routed by label like any other provider call.
 
-### Policy evaluation and calibration
+### Where they fit in the lifecycle
 
-Use representative fixtures with clear labels where available, including missing evidence, misleading options, contradictions, prompt injection, shifted domains, and minority-but-important evidence. Split policy development examples from held-out evaluation. Model-generated labels may bootstrap exploration but cannot be the only ground truth for acceptance.
+The tables list candidate uses by stage. Each candidate is a hypothesis to measure, not a commitment.
 
-Measure action-specific error rates and abstention coverage. For probabilities, evaluate reliability across probability ranges and proper scoring metrics where appropriate. For source exclusion, prioritize recall of necessary evidence; for acceptance, measure false passes. Model confidence must not be multiplied across dependent judgments as if errors were independent.
+**Intake and consensus**
 
-Deployment states are proposed as experimental, shadow, advisory, active, and retired. Shadow decisions do not control execution. Novel policies within a live run can operate with stronger supervision while data accumulates. Revalidation is required when the question, rubric, provider version, input distribution, or consequences change. A provider outage invokes the declared fallback or pauses the relevant branch; it never silently passes verification.
+| Judgment | What it enables | If wrong or uncertain |
+| --- | --- | --- |
+| Would plausible answers to this question materially change the deliverable? | Ask only consequential questions | Escalate ambiguous material cases; sample suppressed questions to catch missed assumptions |
+| Are the offered options actually distinct? | Remove cosmetic alternatives and reduce question fatigue | Ask a focused free-text question instead of forcing a menu |
+| Does this typed answer change meaning when normalized? | Confirm only when the interpretation shifts | Show the normalization back to the user |
+| Does this proposed action or draft depart from the contract's scope? | Catch interpretation drift early | Hold dependent work; present distinct paths to the user |
 
-Generated questions can be gamed or poorly scoped. Validate both the question and its mapping to an action. Independently check permission and spending gates regardless of the answer. Content describing instructions is evidence, not a trusted policy update.
+**Process and harness design**
 
-### Economics and scheduling
+| Judgment | What it enables | If wrong or uncertain |
+| --- | --- | --- |
+| Is a prerequisite missing from this step? | Flag plan defects for the planner | Check topology in code; send complex dependencies to frontier reasoning |
+| Which registry component fits this step's declared conditions? | Reuse evaluated parts inside each step's design | If nothing fits, generate new logic; never force a near match |
+| Which permitted environment class suits these operations? | Right-size isolation and compute | Runtime minimum-isolation rules override |
+| Does this generated code look suspicious? | Route it to closer admission review | Advisory only; never admits anything |
 
-Evaluate net value as avoided frontier work and avoided rework, minus decision calls, added latency, escalation, and losses caused by incorrect decisions. Lower prompt token counts alone do not establish better economics: total cost to an accepted outcome is the primary comparison.
+**Context and evidence**
 
-An illustrative calculation, not a price quote: if 100 repeated calls each avoid 12,000 input tokens at an assumed $2 per million tokens, gross input savings are $2.40. Decision processing costing $0.15 would leave $2.25 before extra retrieval, caching effects, and rework. One erroneous exclusion causing a $3 rerun would erase that gain. Actual pricing must come from the configured providers at execution time.
+| Judgment | What it enables | If wrong or uncertain |
+| --- | --- | --- |
+| Does this passage address a current evidence gap? | Admit promising evidence before costly synthesis | Keep excluded originals; sample for false exclusions |
+| Does this memory record fill a gap for the current step? (recall full scan) | Automatic recall without the agent having to ask | Structural inclusion and supersession filtering stay deterministic; selection is budgeted |
+| Is this new information? | Reduce repetition | Keep independent corroboration and conflicting findings |
+| Is this source suitable for this kind of claim? | Route uncertain sources for corroboration | Missing metadata stays unknown; relevance never proves credibility |
+| Do these claims contradict each other? | Trigger reconciliation or more retrieval | Never discard disagreement because it conflicts with a draft |
+| Is this packet sufficient for the step? | Catch missing inputs before an expensive call | Expand retrieval or mark the step blocked, with a bounded number of checks |
+| Is evidence concentration turning into implied priority? | Early warning for emphasis drift | Broaden evidence or raise a question. The deterministic allocation check (section 8) remains authoritative |
+| Does this summary faithfully represent its sources? | Catch omissions and additions after compaction | Restore excerpts or regenerate with stronger review |
+| Which tools matter for the current objective? | Smaller tool lists in prompts | Discovery stays available; a filter can never grant a permission |
 
-Batch independent questions over shared state when supported. Separate dependent decisions into stages. Cache only against complete semantic keys: evidence content, agreements, question and rubric, provider/version, policy, and relevant freshness. Reuse is project-scoped unless explicitly safe to broaden. Do not evaluate every possible speculative question simply because each is cheap.
+**Execution and adaptation**
 
-Compare four experimental configurations on the same fixtures: no new gate, deterministic gate, decision-model gate, and frontier-model gate. Include context-only and combined interventions to isolate benefits. Track cost, latency, final acceptance, evidence recall, escalation rate, repair counts, and user interruptions. Retain a gate only when the measured quality/cost tradeoff justifies it.
+| Judgment | What it enables | If wrong or uncertain |
+| --- | --- | --- |
+| What kind of failure is this tool outcome? | Choose retry, repair, a new method or investigation | Transport and auth errors are handled directly; unclear causes go to diagnosis |
+| Is this step making measurable progress? | Reach consultation sooner when it isn't | Deterministic failure counters stay authoritative |
+| Repair, redesign or replan? | Propose the right adaptation level | The factory reviews uncertain or high-impact structural changes |
+| Is this departure from the forecast benign or suspicious? | Separate legitimate surprises from amplification or injection | Pause and diagnose; the hard ceiling stays authoritative |
+| Which remaining action has the best expected value? | Inform spending priorities | User priorities and hard ceilings take precedence |
 
-## 8. Verification architecture
+**Verification and integration**
 
-Verification is a set of strategies chosen for the criterion, not one universal score.
+| Judgment | What it enables | If wrong or uncertain |
+| --- | --- | --- |
+| Does this extracted record need expensive re-extraction? | Spend only where records are uncertain | Arithmetic, units and schema checks stay executable |
+| Is this claim supported by this exact source context? | Catch citation mismatches before finalizing | Unknown support triggers retrieval or a qualified statement, never an invented citation |
+| Does this artifact slice meet this one criterion? | Run frequent checks close to production | Material or novel cases get stronger independent verification. Never the only gate |
+| Does this frame, page or audio segment show a known defect? | Catch defects before expensive final assembly | Requires native support for the modality; a transcript can't prove visual correctness |
+| Do the assembled parts overlap, contradict, or leave gaps in handoffs? | Integration review across the whole deliverable | Reopen the affected steps; keep passed artifacts that still apply |
+
+**Security**
+
+| Judgment | What it enables | If wrong or uncertain |
+| --- | --- | --- |
+| Does this content contain instructions aimed at an AI, requests to send data, references to tools or credentials, attempts to change the task, or text addressed to a reviewer? | First-pass screening at ingress | Can only tighten: quarantine or block. Never removes taint |
+| Does this changed connector description add instructions? | Force re-admission review | Treat descriptions as untrusted regardless |
+| Does this outbound payload contain sensitive data of a declared type? | Catch paraphrased leaks that fingerprinting misses | Sends to review; deterministic label checks stay authoritative |
+
+**Reuse**
+
+| Judgment | What it enables | If wrong or uncertain |
+| --- | --- | --- |
+| Does this run's evidence make this component a promotion candidate? | Nominate components for reuse | Promotion needs held-out validation. The authoring model never certifies its own work |
+
+### Screening design
+
+Ingress screening is the most exposed use, so its rules are fixed:
+
+- Deterministic normalization runs first: hidden Unicode, text hidden by CSS, image rescaling to the model's resolution, and length caps.
+- Questions are atomic and include deployment context. Context substantially improves detection.
+- There are three outcomes, and none of them is an unconditional pass:
+  - proceed, still tainted;
+  - quarantine: typed extractions only, effect capabilities removed;
+  - block and surface to the user.
+- Verdicts are logged but never shown to the harness being screened.
+- Every item has a hard screening budget. Guardrails can themselves be attacked to burn tokens. An overrun or an outage quarantines the item.
+- Thresholds are calibrated on held-out data that includes benign text full of trigger words, so over-blocking is measured alongside misses.
+- Proposed option: rotate among equivalent question phrasings and providers so attackers can't tune content offline against one fixed detector. Its value has to be measured as added attacker cost.
+
+Published results support only this advisory role. Adaptive attacks have broken detectors in general. An adaptive study that attacked Jev as a decision-maker hijacked 1.8% of decisions with static attacks and 3.5% with adaptive ones.
+
+### Economics
+
+The quantity that matters is net value: frontier work and rework avoided, minus decision calls, added latency, escalations, and losses from wrong decisions. Fewer prompt tokens alone don't prove better economics. Cost per accepted outcome is the primary comparison.
+
+An illustration, not a price quote. Suppose 100 calls each avoid 12,000 input tokens at $2 per million. The gross saving is $2.40. If the decision processing costs $0.15, that leaves $2.25. One wrong exclusion that forces a $3 rerun wipes out the gain. Error cost dominates, so action-specific error rates matter more than averages.
+
+Scheduling rules:
+
+- Batch independent questions over shared state.
+- Split dependent decisions into stages.
+- Cache only on complete semantic keys: evidence content, agreements, question and rubric, provider and version, policy, and freshness.
+- Keep caches within a project unless broader reuse is explicitly safe.
+- Don't evaluate speculative questions just because each one is cheap.
+
+### Evaluation
+
+Run four configurations on the same fixtures:
+
+1. no new gate;
+2. deterministic gate;
+3. decision-model gate;
+4. frontier-model gate.
+
+Add context-only and combined variants to isolate where the benefit comes from. Track cost, latency, final acceptance, evidence recall, escalation rate, repair counts and user interruptions.
+
+Fixtures include missing evidence, misleading options, contradictions, prompt injection, domain shift, and minority-but-important evidence. Development examples are kept separate from held-out evaluation. Model-generated labels can bootstrap exploration but are never the only ground truth.
+
+Measure error rates and abstention coverage per action. For source exclusion, the critical number is recall of necessary evidence. For acceptance checks, it is false passes.
+
+### Risks specific to decision models
+
+- **Question gaming.** Generated questions can be gamed or badly scoped. Both the question and its mapping to an action are validated, and permission and spending gates are checked regardless of the answer.
+- **Calibration drift.** Calibration drifts when providers update models. Pinned versions and revalidation triggers manage it.
+- **Provider risk.** Providers are young. One is in limited preview without a public schema or pricing. The service abstraction exists so that L2 can drop or swap a provider without redesigning anything (companion document).
+
+---
+
+## 8. Consensus and scope
+
+*Status: behavior Established; mechanisms Proposed*
+
+### When to ask
+
+The test for asking is counterfactual. Would plausible answers lead to materially different outputs, and are the options on offer actually different from each other? Material effects include audience, emphasis, exclusions, deliverable form, success criteria, cost, timing and external commitments.
+
+Before asking, L2 checks whether the answer is already agreed or can be found in authorized evidence. Questions don't outsource ordinary research or repeat earlier agreements. If a question has two real paths, L2 shows two and does not invent a third for symmetry. A factual clarification can be plain free text.
+
+A question includes:
+
+- the issue and the evidence behind it;
+- the distinct paths, a recommendation with its rationale, and the consequences of each path;
+- the affected steps, and whether independent work can continue.
+
+The evidence lists the sources behind each option and their taint status. A recommendation that rests mostly on tainted sources, or on a single cluster of sources, says so. This is a guard against an attacker steering the user through the question itself.
+
+Typed responses are kept verbatim. If normalizing an answer would change what it means, L2 confirms the interpretation. It doesn't ask for confirmation of an answer that is already clear. No response, a preselected option or an elapsed timeout is never treated as approval.
+
+### Evidence and authority stay separate
+
+User agreements, observed evidence, provisional interpretations and proposals are distinct categories:
+
+- A source can support a fact without supporting a change in strategy.
+- An accepted preference can govern emphasis without making any factual claim true.
+- New evidence that contradicts the factual premise of an agreement reopens the issue with the user. It is not suppressed.
+
+Applicable agreements appear in every execution and review packet. Outstanding material assumptions block the work that depends on them. Routine reversible choices proceed under the agreed policy and stay inspectable.
+
+### Emphasis allocation
+
+The contract's priorities take a concrete form: ranked topics or segments, each with an emphasis band and a tolerance. Users can rank them and let L2 infer the bands.
+
+- Outlines and sections are tagged to these topics, deterministically wherever possible.
+- At outline formation, during drafting and again at integration, the space and recommendations each topic actually receives are compared with the contract.
+- Drift outside tolerance blocks progress and either opens a question or triggers broader retrieval.
+
+Emphasis isn't a formula. A strategy or an obligation can justify a disproportionate share, but that justification has to be agreed.
+
+The same check catches the accidental failure (retrieval frequency turning into priority) and the adversarial one: volume poisoning with on-topic, slanted content that contains no instructions at all. Screening documents one at a time can't catch the adversarial case.
+
+The regression fixture has three parts: a broad-market request, a stated small segment share, and a retrieval corpus dominated by that segment. L2 must keep the agreed allocation, look for broader evidence, and ask only when a substantive strategic alternative really deserves a decision. The same principle covers test-prep material taking over a general mathematics course, or an estimate quietly substituting premium materials. Parts that are each correct can still add up to a wrong whole.
+
+---
+
+## 9. Context and evidence
+
+*Status: Proposed*
+
+The context service builds each model call from ingress records and artifacts. Raw untrusted content never reaches a worker directly (section 5).
+
+1. **Store originals.** Keep each original asset with its hash, origin, retrieval time, permissions, parser version and labels, plus page, row, timestamp or span locations.
+2. **Retrieve cheaply first.** Do inexpensive structural extraction, exact-duplicate checks and candidate retrieval. Search snippets count as discovery, not as source evidence.
+3. **Judge candidates.** Apply focused judgments to candidates against the current evidence gaps and the contract. Relevance, novelty, support and contradiction are evaluated separately (section 7).
+4. **Admit sparingly.** Admit excerpts, or commission extraction or summarization, only where justified.
+5. **Assemble the packet.** It contains the applicable agreements, the step's objective, evidence and counter-evidence, open questions, taint labels, and enough operational state to execute correctly.
+6. **Check coverage and balance.** A set of individually relevant passages can still miss an essential perspective or prerequisite.
+7. **Account for the whole request.** That means instructions, tools, attachments, history and output reserve. Valid tool-call and result pairs are kept together. If protected material doesn't fit, the task is split or the model changed. Agreements are never dropped. Before each call, every applicable agreement is checked by hash. If one is missing, the call fails closed.
+8. **Record and preserve.** Record the packet hash and admission decisions. Workers can request originals or more context. Excluding something from a packet never deletes it.
+
+### Memory recall
+
+In Loom, the agent could query stored context with a tool but rarely did. In L2, recall happens before every model call as part of building the packet. The agent doesn't have to remember to ask.
+
+Recall runs in this order:
+
+1. **Structure first.** Include the agreements, decisions and open questions that apply to the step, and everything the step's inputs link to through lineage. These are found by lookup, not by a relevance score.
+2. **A step-shaped query.** The query is the step objective, the relevant contract clauses and the open questions, not only the latest prompt. Indirect references ("do it like last time") rarely share words with the thing they mean.
+3. **Full scan by decision model, per step.** Every memory record in scope is scored against the step query, in parallel batches. Nothing is lost to a bad keyword or embedding match. Scoring happens per step, not per model call: every record is scored when the step starts, new records are scored as they arrive, and everything is rescored only when the step query changes. Cost then scales with records × steps, not records × calls. At reported pricing a scan of a long run's history costs cents; the binding constraint is provider throughput, which concurrent harnesses share.
+4. **Two-stage fallback.** If a scan would exceed the throughput budget for the step, a cheap keyword and embedding search proposes candidates first and the decision model reranks only those. Full scan and two-stage are compared on recall of needed context before either is committed as the default.
+5. **Supersession filter.** Items replaced by a newer decision or fact are dropped or flagged. Stale context is worse than missing context.
+6. **Budgeted, diverse selection.** Items are chosen within a token budget, with a diversity constraint, not on a threshold alone. A threshold alone can flood the packet with one topic, and evidence concentration turns into implied priority (section 8). Thresholds are set per policy from data, because provider confidence is not a calibrated probability.
+7. **Labels travel with recalled items.** Tainted memory stays tainted and enters through the prose lane. A full scan gives every tainted record a chance to promote itself on every step, for example text written to look relevant to everything. Tainted records therefore get a capped share of the recall budget.
+8. **Fallback, not primary.** Workers keep an expand handle to request specific items. The design aims for that handle to be rarely needed.
+
+The relevance question itself needs testing. One published benchmark found a single compound question scored far lower than the same judgment split into atomic questions and combined in code. If "is this relevant to the step?" behaves like a compound question, it may need decomposing too.
+
+Memory is stored as typed records (MemoryRecord, section 4), not as raw messages. A message mixes decisions, facts, chatter and tool output, and that mix retrieves badly.
+
+Every recall is logged: what was included, what was left out, and whether the output drew on it. Recall is evaluated in five configurations: full scan, two-stage, agent-pull (the Loom approach), recent-N, and include-everything-relevant. The measures are recall of the context that was actually needed, and quality per token.
+
+Selection depends on the stage. A passage that drafting doesn't need may be essential for verification, and reviewers retrieve independently of the producer's selection. A user correction invalidates affected packet caches. Summaries keep their derivation links and never outrank their sources.
+
+---
+
+## 10. Verification
+
+*Status: floor and additive rule Established; strategies Proposed*
+
+Verification is a set of strategies chosen per criterion, not one universal score.
 
 | Strategy | Appropriate evidence | Limits |
 | --- | --- | --- |
-| Structural | Schemas, required files, links, units, counts | Does not establish semantic quality |
-| Executable | Tests, calculations, simulations, differential outputs | Only covers specified properties and exercised cases |
-| Semantic decision | Narrow claim or criterion with supporting context | Requires task-specific evaluation and uncertainty handling |
-| Independent generative review | Complex reasoning, contradictions, design critique | Can share errors with the producer; use independent evidence |
-| Visual or media inspection | Rendered pages, browser state, frames, audio | Must inspect the actual modality and final artifact |
-| User review | Material preferences, representative deliverables, final commitments | Must not become a substitute for checks L2 can perform |
-| Field evidence | Learner outcomes, operational measurements, actual project results | Often unavailable during production; report the boundary |
+| Structural | Schemas, required files, links, units, counts | Says nothing about semantic quality |
+| Executable | Tests, calculations, simulations, differential outputs | Covers only specified properties and exercised cases |
+| Semantic decision | A narrow claim or criterion with supporting context | Needs task-specific evaluation and uncertainty handling |
+| Independent generative review | Complex reasoning, contradictions, design critique | Can share the producer's errors; use independent evidence |
+| Visual or media inspection | Rendered pages, browser state, frames, audio | Must inspect the actual modality and the final artifact |
+| User review | Material preferences, representative deliverables, final commitments | Not a substitute for checks L2 can run itself |
+| Field evidence | Learner outcomes, operational measurements, project results | Often unavailable during production; report where evidence stops |
 
-Verdicts are pass, fail, inconclusive, or verifier error. Verifier failure is not artifact failure, and missing evidence is not a pass. Hard requirements cannot be averaged away by high quality scores elsewhere. Record criteria separately from preferences and advisory improvements.
+**The floor.** A fixed, non-generated set of checks is compiled from the outcome contract: structural, executable, arithmetic and policy checks. It is the root of trust. Generated verifiers can only add to it.
 
-Check artifact integrity, semantic correctness, agreement alignment, and whole-output balance. Producer and verifier roles may use different providers or methods, but provider diversity alone does not prove independence. Source overlap and derivation lineage matter.
+**Isolation from producers.**
 
-Generated verifiers cannot revise the criteria they enforce. Any proposed relaxation becomes a visible contract change. Publication checks bind to the artifact hash and destination; editing an approved artifact invalidates approval when the change is material.
+- Verifier files are read-only to producers.
+- Producers never see verifier source.
+- Impossible probes may be inserted into live runs to measure gaming.
 
-## 9. Docker deployment and execution isolation
+**Verdicts.** A verdict is pass, fail, inconclusive or verifier error. Verifier failure is not artifact failure, and missing evidence is not a pass. A hard requirement can't be averaged away by high scores elsewhere. Criteria are recorded separately from preferences and advisory improvements.
 
-The core is packaged for Docker with persistent database and artifact storage. Generated work never executes inside the core application's process. Proposed deployment uses a non-root core, constrained network access, separate worker networks, and a narrowly exposed environment broker.
+**What gets checked.**
 
-Docker's documentation describes the privileged daemon attack surface and the risks of unrestricted host mounts; container configuration is part of the security boundary. L2 therefore does not expose a Docker socket or unrestricted daemon API to generated workers. Rootless operation should be evaluated where supported, rather than assumed to make arbitrary code safe. [Docker security](https://docs.docker.com/engine/security/) · [Rootless mode](https://docs.docker.com/engine/security/rootless/)
+- Artifact integrity, semantic correctness, agreement alignment and whole-output balance.
+- Producer and verifier may use different providers or methods, but different providers alone don't prove independence. Shared sources and derivation lineage matter.
 
-Proposed execution classes:
+**Changes after approval.**
 
-| Class | Use | Controls |
+- A generated verifier can't revise the criteria it enforces. Any proposed relaxation becomes a visible contract change.
+- Publication checks bind to the artifact hash and the destination. A material edit to an approved artifact invalidates the approval.
+
+---
+
+## 11. Execution isolation and deployment
+
+*Status: Docker Established; mechanisms Proposed*
+
+The core ships as a Docker deployment with persistent database and artifact storage. Generated work never runs in the core's process.
+
+Container configuration is part of the security boundary. Docker's own guidance describes the attack surface of the privileged daemon and the risk of broad host mounts. Generated workers never get a Docker socket or daemon API. Rootless mode is worth evaluating, but it doesn't make arbitrary code safe. [Docker security](https://docs.docker.com/engine/security/) · [Rootless mode](https://docs.docker.com/engine/security/rootless/)
+
+| Execution class | Use | Controls |
 | --- | --- | --- |
-| Restricted container | Ordinary generated utilities and supported tests | Unprivileged user, resource and process limits, minimal mounts, explicit network policy |
-| Disposable VM or equivalent stronger boundary | Higher-risk dependencies, unfamiliar code, complex experiments | Separate guest boundary, no implicit host shares, controlled ingress/egress, disposable state |
-| Dedicated remote environment | Specialized compute or workloads unavailable locally | Approved provider, explicit data transfer, budget reservation, leases and cleanup |
+| Restricted container (gVisor candidate) | Ordinary generated utilities and tests | Unprivileged user, resource and process limits, minimal mounts, no network stack |
+| Disposable VM or equivalent | Higher-risk dependencies, unfamiliar code, complex experiments | Separate guest boundary, no implicit host shares, disposable state |
+| Dedicated remote environment | Specialized compute | Approved provider, explicit data transfer, budget reservation, leases and cleanup |
 
-Exact VM technology and host support remain implementation decisions. If the required isolation is unavailable, the run reports a missing capability; it does not downgrade silently. Start with Linux as a proposed execution baseline and validate Docker Desktop operation separately.
+If the required isolation isn't available, the run reports a missing capability. It never downgrades silently. Linux is the baseline. Docker Desktop is validated separately; nested VMs on macOS are not expected to work cleanly.
 
-The broker enforces allowed images, mounts, ports, resources, and lifetime. It returns environment IDs and receipts rather than host command authority. Generated dependency installation occurs in disposable build environments with locked manifests and captured hashes. Sensitive connector credentials remain outside them. Network grants distinguish package retrieval from arbitrary external access.
+**The broker.** The broker is root-equivalent on the host whatever workers can see, so it is a separate minimal service with a typed API: allowed images, mount templates, resource classes and lifetimes. It returns environment IDs and receipts, never host command authority. Generated code never reaches it.
 
-Paid model and service operations must traverse metered gateways. A worker cannot evade reservations by making a direct authenticated HTTP call. Where an approved external job has its own internal spending, reserve and constrain that job as a whole. Infrastructure enforcement, rather than generated-code cooperation, supplies these boundaries.
+**Dependencies.** Dependency installation happens in disposable build environments that pull through the registry proxy. The proxy checks that each package exists in the registry and how old it is, and enforces lockfile hashes and, for unattended runs, allowlists.
 
-Environment leases survive coordinator restarts. A reaper tears down expired or abandoned resources and reconciles billing. Checkpoint artifacts are exported before normal teardown. Secret-bearing memory snapshots are not promoted into reusable harness templates.
+**Spending.** Paid operations go through metered gateways, enforced by infrastructure and not by generated code cooperating. An approved external job with its own internal spending is reserved and constrained as a whole.
 
-## 10. Connectors and one profile per instance
+**Leases and cleanup.**
 
-Use a connector interface for authenticated external systems, separate from local/generated tools and model-provider adapters. Expose all three through a common capability catalog where useful without conflating their credential or lifecycle semantics.
+- Environment leases survive coordinator restarts.
+- A reaper tears down expired or abandoned resources and reconciles billing.
+- Checkpoints are exported before normal teardown.
+- Memory snapshots that contain secrets are never promoted into reusable templates.
 
-A connector advertises versioned operations, input/output schemas, side-effect class, idempotency support, cancellation and reconciliation behavior, resource scopes, health, rate limits, and cost information when available. Discovery returns a shortlist; full operation schemas are loaded on demand. This avoids injecting every connected operation into every model request.
+---
 
-MCP is a proposed interoperability path alongside native HTTP adapters. Its authorization specification addresses HTTP authorization and resource-bound tokens; protocol compliance does not establish that a server or its tool descriptions are trustworthy. Pin supported protocol versions and test compatibility. Follow the authorization flow for the selected transport. [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+## 12. Connectors and identity
 
-### Identity simplification
+*Status: identity model Established; connector design Proposed*
 
-An instance has one connection profile. Each canonical service binding has one account identity and credential set. Runs can restrict resources and scopes but cannot select another account. Registering the same service under another alias must not become a back door to multiple profiles. Different services and different model providers remain possible.
+Connectors (authenticated external systems), local and generated tools, and model-provider adapters are separate kinds of component. They can share one capability catalog without mixing up their credential or lifecycle rules.
 
-Token refresh is an ordinary credential lifecycle operation. Account replacement is an explicit administrative action: pause affected work, record a binding revision, invalidate dependent grants, and require revalidation before resume. Never silently rebind a running task to another account.
+**Manifests.** A connector manifest declares:
 
-The credential service stores secret references and protects resolved values from prompts, logs, generated code, and ordinary artifacts. Scoped runtime grants authorize operations through the gateway; they are not the provider's raw credentials. The exact secret-storage backend is a deployment choice. Secret backups and encryption-key recovery need an explicit operator procedure.
+- versioned operations and their schemas;
+- side-effect class, idempotency, cancellation and reconciliation behavior;
+- resource scopes, health, rate limits and cost information;
+- a default confidentiality label, and whether the connector writes outside L2.
 
-Connection states include disconnected, authorizing, ready, degraded, expired, and revoked. Failures distinguish authentication, insufficient scope, rate limiting, transport errors, and ambiguous external outcomes. Broader scopes need consent; a model classification cannot grant them.
+Discovery returns a shortlist, and full schemas load on demand, so not every connected operation lands in every prompt.
 
-A newly generated adapter starts as an isolated staged tool with fixtures and mocked credentials. Registering it as an authenticated connector requires explicit permission and capability validation. Connector metadata and results are untrusted input. External actions remain subject to the same approval boundary regardless of whether they originate from a connector, browser, or generated script.
+**Trust.** Descriptions and results are untrusted input, and a changed description forces re-admission. A newly generated adapter starts as an isolated, staged tool with fixtures and mocked credentials. Registering it as an authenticated connector needs explicit permission.
 
-## 11. Budget agreement and enforcement
+**Writes.** Connector writes must target a destination in the run's manifest and must carry a label cleared for that destination (section 5).
 
-Discovery produces a range and expected cost, an authorized ceiling, included services, main cost drivers, assumptions, and optional scope reductions. The user may accept, decline, or revise. Expected cost is not a spending permission by itself. No monetary estimate for the full example course is asserted in this brief.
+**MCP.** MCP is one interoperability path alongside native HTTP adapters. Complying with the protocol doesn't make a server or its tool descriptions trustworthy. L2 pins supported protocol versions and follows the authorization flow for each transport. [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
 
-Track actual settled spend, outstanding reservations, estimated remaining unreserved work, forecast total, and original versus revised ceilings. Keep currency and price-version metadata. Track model calls, tokens, compute, paid tools, storage, and media separately. Local compute may have a declared imputed cost while cash spend remains separately visible. Human time is not silently monetized.
+### Identity
 
-Before a paid operation, atomically reserve a conservative bound. Admission requires settled spend plus outstanding commitments plus the new reservation to fit the authorized ceiling. Settlement replaces its reservation with actual cost; do not count both. Concurrent harnesses share the ledger, preventing each from independently spending the same remaining allowance.
+An instance has one connection profile. Each service binding has one account and one credential set.
 
-Providers may have delayed billing, uncertain charges, or non-cancelable jobs. Use output/time caps, conservative reservations, and an explicitly disclosed contingency inside the ceiling. Refuse unattended operations with unbounded financial exposure. A hard provider-level cap cannot be promised when the provider offers none; make residual uncertainty visible before authorization.
+- Runs can narrow resources and scopes but can't select another account.
+- Registering a service under an alias is not a back door to a second profile.
+- Token refresh is routine.
+- Replacing an account is an explicit administrative act: pause affected work, record a binding revision, invalidate dependent grants, and revalidate before resuming. A running task is never silently rebound to another account.
 
-Forecast changes can trigger a budget question before the ceiling is reached. Offer an increase, a meaningful scope/method adjustment, or an orderly stop with completed artifacts. Preserve every revision and reason. Reserve enough for durable checkpointing and required cleanup; an exhausted budget must not leave paid environments running indefinitely.
+The credential service stores secret references and keeps resolved values out of prompts, logs, generated code and artifacts. Runtime grants authorize operations through the gateway; they are not raw provider credentials. Backing up secrets and recovering encryption keys need an explicit operator procedure.
 
-## 12. Persistence and recovery
+Connection states are disconnected, authorizing, ready, degraded, expired and revoked. Failures distinguish authentication, insufficient scope, rate limiting, transport errors and ambiguous external outcomes. Broader scopes need consent, and a model classification can never grant them.
 
-Proposed first-release storage is PostgreSQL for authoritative records and a content-addressed artifact volume with an object-store adapter boundary. This is a recommendation for concurrent reservations and durable scheduling, not a user-established requirement. SQLite remains a possible simpler deployment alternative if its operational tradeoffs meet the same invariants.
+---
 
-The coordinator owns canonical state. Append event records in the same transaction as state transitions; publish UI notifications through a transactional outbox. Events provide traceability without making several partially synchronized files independent authorities.
+## 13. Budget and economics
 
-Proposed run states are discovery, awaiting agreement, ready, running, paused, integrating, awaiting delivery approval, completed, failed, and canceled. Record blocking reasons separately: a run may have pending questions while independent nodes remain running. Attempts have their own queued, leased, running, checkpointed, verifying, succeeded, failed, and superseded states. Each transition requires the expected revision and applicable receipts; a worker's final message alone cannot complete a run.
+*Status: agreement model Established; ledger design Proposed*
 
-Use leases and fencing generations for workers. Delivery of queued work may be repeated; external effects must use idempotency keys where supported. When an external action's result is unknown, reconcile its status before retrying. Do not claim exactly-once execution across arbitrary services. User decisions and publication receipts bind to the relevant run, action, revision, and artifact.
+**Estimate.** Discovery produces:
 
-At restart, reconstruct active runs from durable records, expire stale leases, reconcile reservations and external jobs, and resume from supported checkpoints. A checkpoint identifies the execution spec, input artifacts, contract, completed operations, and continuation state. Replaying a trace for diagnosis must not reissue external effects.
+- a cost range and an expected cost;
+- a proposed ceiling and what it includes;
+- the main cost drivers and assumptions;
+- optional scope reductions.
 
-Preserve original artifacts and promote immutable revisions through staged, verified, and delivered states. Concurrent attempts write separate namespaces. Final assembly owns its output revision; promotion uses expected-revision checks. Changes to inputs or agreements mark dependent evidence stale until reviewed.
+Factory design and admission for every step are line items. The estimate also accounts for provider routing by label, since private data may require a particular or local provider. The user accepts, declines or revises. An expected cost is not permission to spend.
 
-Schema upgrades require migrations, backup/restore tests, and explicit operator errors. No silent ephemeral fallback for failed upgrades. Retention and deletion operate on project evidence, artifacts, logs, and caches consistently; derived data cannot survive a deletion policy merely because it lives in a summary or embedding.
+**Track.** The ledger records settled spend, outstanding reservations, estimated remaining work, the forecast total, and the original and revised ceilings, with currency and price-version metadata. Model calls, tokens, compute, paid tools, storage and media are tracked separately. Local compute can carry a declared imputed cost, shown separately from cash spend. Human time is never silently monetized.
 
-## 13. Browser experience and automation API
+**Reserve and settle.** Before a paid operation, the ledger atomically reserves a conservative bound. The operation is admitted only if settled spend plus outstanding reservations plus the new reservation fits under the ceiling. Settlement replaces the reservation with the actual cost; both are never counted. Concurrent harnesses share one ledger.
 
-The browser presents the agreed outcome, process view, active harnesses, question inbox, artifact previews, verification status, and budget-to-actual. Users can inspect a harness's capabilities and revisions without reading generated code by default. Technical traces remain available for diagnosis.
+**Uncertain charges.** Providers can bill late, charge uncertain amounts, or run jobs that can't be cancelled. L2 uses output and time caps, conservative reservations and a disclosed contingency inside the ceiling. Unattended operations with unbounded financial exposure are refused. If a provider offers no hard cap, L2 doesn't promise one and makes the residual uncertainty visible before authorization.
 
-Questions show why an answer changes the output, the recommended route, alternatives, and free text. Pending questions identify blocked work and independent work still proceeding. The UI distinguishes technical verification from user acceptance and external publication.
+**Forecast questions.** Dynamic replanning requires dynamic rebudgeting. Every replan or harness redesign produces a re-forecast. When the forecast moves past the approved budget, L2 raises a budget question before the ceiling is hit. It offers an increase, a meaningful change of scope or method, or an orderly stop that keeps completed artifacts. Every revision and its reason are kept. Enough is reserved for checkpointing and cleanup that an exhausted budget never leaves paid environments running.
 
-Run controls include pause, resume, cancel, revise scope, answer questions, and propose/approve budget changes. Pausing checkpoints work and handles continuing external jobs explicitly; cancellation reports cleanup and any irreversible effects. A browser disconnect does not stop or approve anything.
+**Forecast as a security signal.** Each step's forecast doubles as a security baseline. A large departure is a signal in its own right, well before the ceiling, for example inflated reasoning tokens or a tool chain much longer than planned.
 
-The API and CLI operate on the same commands and state machine. Proposed resources include runs, contracts, questions, budgets, artifacts, harness revisions, connectors, and events. Mutating requests carry idempotency and expected-revision fields. Event streaming supports replay from a cursor. Headless runs pause for unresolved material decisions unless an applicable policy or answer is already authorized.
+---
 
-The web UI still requires access control despite being single-user. Bind locally by default; remote exposure requires an explicit authenticated deployment configuration. Interactive artifact previews execute in a separate restricted origin or sandbox without access to the control-plane session or connector secrets.
+## 14. Persistence and recovery
 
-## 14. Cross-run reuse
+*Status: Proposed*
 
-Reuse candidates include execution patterns, generated utilities, harness packages, decision policies, verifier fixtures, and explicit preferences. Store applicability conditions, versions, dependencies, evaluation results, provenance, and known failures. Distinguish a reusable template from a run-specific instance containing private evidence.
+PostgreSQL holds authoritative records, and artifacts go in a content-addressed store behind an object-store adapter. This recommendation is driven by concurrent reservations and durable scheduling. SQLite remains an option if it can meet the same invariants.
 
-A successful run nominates a component; promotion requires additional checks. Later failures can quarantine a version without corrupting historical receipts. Retrieval favors validated fit, not popularity alone. Users can inspect and revoke remembered preferences. Cross-project evidence use requires explicit authorization; sharing a runtime profile is not that authorization.
+**State and events.** The coordinator owns canonical state. Event records are appended in the same transaction as state transitions, and the UI is notified through a transactional outbox.
 
-## 15. Worked design cases
+**Run states.**
+
+- Runs: discovery, awaiting agreement, ready, running, paused, integrating, awaiting delivery approval, completed, failed, canceled.
+- Attempts: queued, leased, running, checkpointed, verifying, succeeded, failed, superseded.
+
+Blocking reasons are recorded separately from state, including pending questions and step consultations. Every transition needs the expected revision and the applicable receipts. A worker's final message alone never completes anything.
+
+**Workers and effects.** Workers hold leases with fencing generations. Queued work may be delivered more than once, so external effects use idempotency keys where the service supports them. When an external outcome is unknown, L2 reconciles it before retrying, and it doesn't claim exactly-once delivery. Decisions and publication receipts bind to their run, action, revision and artifact.
+
+**Restart.** On restart, L2 rebuilds active runs from durable records, expires stale leases, reconciles reservations and external jobs, and resumes from supported checkpoints. A checkpoint identifies the spec, inputs, contract, completed operations and continuation state. Replaying a trace for diagnosis never reissues external effects.
+
+**Artifacts.** Originals are preserved. Immutable revisions are promoted from staged to verified to delivered. Concurrent attempts write to separate namespaces. Final assembly owns its output revision, and promotion uses expected-revision checks. A change to inputs or agreements marks dependent evidence stale. Lineage carries labels, so any payload's label is one lineage query away.
+
+**Upgrades and retention.** Schema upgrades need migrations, backup and restore tests, and explicit operator errors; a failed upgrade never falls back silently to ephemeral state. Retention and deletion apply consistently to evidence, artifacts, logs and caches. Derived data doesn't escape a deletion policy by living in a summary or an embedding.
+
+---
+
+## 15. Browser UI, API and CLI
+
+*Status: interfaces Established; design Proposed*
+
+**What the UI shows.** The browser shows the agreed outcome, the process, active harnesses, the question and consultation inbox, artifact previews, verification status, and budget against actuals. Users can inspect a harness's capabilities and revisions without reading generated code. Technical traces are there for diagnosis.
+
+**Questions and consultations.** These show why the answer matters, the recommended route, the alternatives, a free-text option, the blocked work and the work still running. The UI keeps technical verification, user acceptance and external publication visibly distinct.
+
+**Approvals.** The control plane renders approvals from structured records, and model-written text appears only in a labelled explanation panel (section 5). Budget and publication approvals show diffs, not summaries.
+
+**Controls.** Run controls are pause, resume, cancel, revise scope, answer questions and consultations, and propose or approve budget changes. Pausing checkpoints work and handles external jobs that are still running explicitly. Cancellation reports cleanup and any irreversible effects. A browser disconnect never stops or approves anything.
+
+**API and CLI.** Both drive the same commands and state machine as the UI. Mutations carry idempotency keys and expected-revision fields. Event streams replay from a cursor. Headless runs pause on unresolved material decisions and on consultations unless an applicable answer is already authorized.
+
+**Access and previews.** The UI needs access control even with a single user. It binds locally by default, and remote exposure needs an explicit, authenticated configuration. Previews run in a separate restricted origin with no access to the control-plane session or secrets. They are inert: no remote images, no automatic fetches, full URLs shown, and outbound connections blocked.
+
+---
+
+## 16. Cross-run reuse
+
+*Status: Established in principle; mechanism Proposed*
+
+Reuse candidates include execution patterns, generated utilities, harness packages, decision policies, verifier fixtures and explicit preferences. Each stores its applicability conditions, versions, dependencies, evaluation results, provenance and known failures. A reusable template is kept distinct from a run-specific instance that contains private evidence.
+
+**Promotion.** A successful run can nominate a component. Promotion requires held-out checks and is never certified by the authoring model. Components designed under taint keep that label and can't be promoted without review. If a version later fails, it can be quarantined without corrupting historical receipts. Retrieval favors validated fit over popularity.
+
+**Preferences.** Users can inspect and revoke remembered preferences. Preferences are written only from the user's own typed answers.
+
+**Evidence.** Using evidence across projects needs explicit authorization. Sharing an instance is not authorization.
+
+---
+
+## 17. Worked design cases
+
+*Status: examples Established; walkthroughs illustrative*
 
 ### Course production
 
-The challenge is a complete Texas grade 7 mathematics course with explanations, interactive activities, media, quizzes, feedback, and delivery through an existing framework. No platform is selected and no curriculum claims are made here. A real run must establish authoritative standards and the chosen framework's capabilities.
+The challenge is a complete Texas grade 7 mathematics course: explanations, interactive activities, media, quizzes and feedback, delivered through an existing framework. This brief selects no platform and makes no curriculum claims. A real run has to establish the authoritative standards and the chosen framework's capabilities.
 
-Discovery resolves learner context, instructional approach, platform constraints, accessibility expectations, assessment behavior, scope, and budget. Present platform alternatives only after identifying meaningful requirements. Use a representative lesson to reach consensus on the actual experience before scaling production.
+**Discovery.** Discovery settles:
 
-The factory may synthesize source-verification, curriculum-mapping, instructional-design, interactive-development, media-production, assessment, and integration harnesses. These are run artifacts assembled from generic capabilities. They are not new core runtime types.
+- the learner context and instructional approach;
+- platform constraints and accessibility expectations;
+- how assessments behave;
+- scope and budget.
 
-Adaptation example: an interactive activity passes arithmetic checks but permits guessing. The local verifier records that specific instructional gap. After bounded repair fails, the factory proposes a revised interaction loop and tests it. If the change stays within the agreed experience and budget, it proceeds; a change from interactive activities to static worksheets requires consensus.
+Platform alternatives are presented only after the meaningful requirements are known. A representative lesson is used to agree on the actual experience before production scales up.
 
-Acceptance includes traceable standards coverage, correct mathematics, functional activities, independently solved assessments, usable media, accessibility alternatives, framework import, and whole-course alignment. Actual learning effectiveness remains a field-evidence question. A production review cannot certify student outcomes that have not been measured.
+**Harnesses.** The factory designs harnesses for source verification, curriculum mapping, instructional design, interactive development, media production, assessment and integration. The roughly 40 lesson nodes come from one template, which makes them a natural case for sharing one admitted design. These harnesses are run artifacts assembled from generic capabilities. None of them is a new core runtime type.
+
+**Adaptation and consultation.** Suppose an interactive activity passes the arithmetic checks but lets learners guess their way through. The verifier records that specific instructional gap. Bounded repair fails, so the factory proposes a revised interaction loop and tests it. If the change stays within the agreed experience and budget, it proceeds. If the step keeps producing invalid output, the user is consulted. Switching from interactive activities to static worksheets would always need agreement.
+
+**Acceptance.** Acceptance requires:
+
+- traceable standards coverage and correct mathematics;
+- working activities, and assessments that have been independently solved;
+- usable media, with accessibility alternatives;
+- a successful import into the framework;
+- alignment across the whole course.
+
+Whether students actually learn is a question for field evidence. A production review can't certify outcomes nobody has measured.
 
 ### Construction estimate
 
-The challenge is an estimate from drawings, specifications, schedules, and other supplied project files, with material details confirmed during work. Discovery establishes scope, location, currency, pricing date, required estimate form, exclusions, allowances, and the user's confirmation expectations.
+The challenge is an estimate built from drawings, specifications, schedules and other supplied files, with material details confirmed along the way. Discovery establishes:
 
-The factory may synthesize document reconciliation, quantity extraction, calculation, rate sourcing, ambiguity resolution, and estimate assembly harnesses. Every material quantity and rate retains its source or approved assumption. Missing dimensions, conflicting revisions, material substitutions, and substantial allowances become user decisions where investigation cannot resolve them.
+- scope and location;
+- currency and pricing date;
+- the required estimate format;
+- exclusions and allowances;
+- how much confirmation the user wants.
 
-Executable checks handle units, extensions, aggregation, duplication, and reconciliation. Decision models identify candidate ambiguity and source mismatch; they do not replace arithmetic or manufacture missing quantities. Specialized drawing interpretation requires suitable tools and validation. The system reports uncertainty rather than implying professional certification.
+Uploaded files are private by default, so the destination manifest and provider routing apply from the first step.
 
-Adaptation example: a later drawing revision invalidates quantities already calculated. L2 identifies affected items through lineage, reruns the necessary work, forecasts the added cost, and raises any changed scope for consensus. Unaffected items remain reusable. Preparing the estimate and submitting a bid are separate authorizations.
+**Harnesses.** The factory designs harnesses for document reconciliation, quantity extraction, calculation, rate sourcing, ambiguity resolution and estimate assembly. Every material quantity and rate keeps its source or an approved assumption. Missing dimensions, conflicting revisions, material substitutions and large allowances become user decisions when investigation can't resolve them.
+
+**Checks.** Executable checks cover units, extensions, aggregation, duplication and reconciliation. Decision models flag likely ambiguity and source mismatches. They never replace the arithmetic or make up missing quantities. Interpreting drawings needs suitable tools and validation. The output states its uncertainty and does not imply professional certification.
+
+**Adaptation.** A later drawing revision invalidates quantities already calculated. L2 finds the affected items through lineage, reruns the necessary work, forecasts the added cost and raises any change in scope. Unaffected items stay valid. Preparing the estimate and submitting a bid are separate authorizations.
 
 ### Additional generality tests
 
-Use a software compatibility experiment and a market-research strategy as smaller acceptance cases. All four domains should execute through the same contracts, scheduler, connector system, budget ledger, and decision service. Domain-specific criteria belong in generated specifications or optional packages.
+A software compatibility experiment and a market-research strategy are smaller acceptance cases. All four domains run through the same contracts, scheduler, perimeter, budget ledger and decision service. Domain-specific criteria live in the generated specifications or in optional packages.
 
-## 16. Evaluation and release gates
+---
 
-L2 succeeds when it produces outputs aligned with agreements at acceptable cost and with recoverable execution. No single model score determines release readiness.
+## 18. Evaluation and release gates
 
-| Test | Required outcome |
+*Status: Proposed*
+
+No single model score decides release. Runtime invariants get strict pass/fail tests. Statistical model performance is reported with uncertainty bounds. Thresholds are set on a documented, representative evaluation set before anyone claims savings or reliability.
+
+| Gate | Required outcome |
 | --- | --- |
-| Undefined challenge | Synthesizes a process and at least one novel executable harness without a hand-authored domain workflow |
-| Generated harness defect | Admission detects a deliberately broken verifier or prohibited capability request |
-| Live redesign | Changes execution strategy with new evidence while preserving authority, cost accounting, and lineage |
-| User scope revision | Invalidates affected work and prevents stale completion from promotion |
-| Market emphasis drift | Maintains agreed scope despite skewed retrieval; asks only for a substantive unresolved alternative |
-| Decision filtering | Measures useful-evidence recall and end-to-end quality against unfiltered and frontier-reviewed baselines |
-| Provider outage | Uses declared fallback or pauses; never records an unsupported verification pass |
-| Concurrent spending | Reservations cannot oversubscribe authorized capacity; settlement survives interruption |
-| Crash recovery | Resumes questions, checkpoints, jobs, and budgets without duplicating external effects |
-| Connector identity | No per-run profile selection or silent identity substitution; refresh and revocation work |
-| Publication | Approval applies to the correct destination and artifact revision |
-| Environment cleanup | Cancellation and restart do not leave unmanaged paid workers running |
-| Generality | Different domains need domain specifications, not changes to core orchestration |
+| Undefined challenge | Synthesizes a process with a designed harness for every step, including at least one novel executable harness, with no hand-written domain workflow |
+| Release-one success | Works end to end on one real task (task open), and beats a strong single-harness agent (measure and baseline open, section 21). Design and admission cost per step is measured from the first runs |
+| Generated harness defect | Admission catches a deliberately broken verifier or a prohibited capability request |
+| Live redesign | Execution strategy changes with new evidence while authority, cost accounting and lineage are preserved |
+| Step consultation | A step that keeps failing pauses, raises a consultation with distinct, costed paths, and never gets abandoned or has its requirements lowered without a user decision |
+| User scope revision | Affected work is invalidated, and stale completions are kept from being promoted |
+| Market emphasis drift | The achieved allocation stays within the contracted tolerance under skewed retrieval and adversarial volume poisoning. L2 asks only about substantive alternatives |
+| Decision filtering | Recall of useful evidence and end-to-end quality are measured against unfiltered and frontier-reviewed baselines |
+| Provider outage | The declared fallback runs or the branch pauses. No unsupported verification pass is ever recorded |
+| Concurrent spending | Reservations can never oversubscribe the ceiling, and settlement survives interruption |
+| Crash recovery | Questions, consultations, checkpoints, jobs and budgets resume without duplicating external effects |
+| Connector identity | No profile can be selected per run and no identity is ever substituted silently. Refresh and revocation work |
+| Publication | Approval applies to the correct destination and artifact revision and is re-checked at dispatch |
+| Environment cleanup | Cancellation and restart leave no unmanaged paid workers running |
+| Adaptive injection | Structural controls hold under strategy-based adaptive attack. Utility under attack is reported alongside attack success, and the screening-only configuration is measured separately |
+| Exfiltration | Canary fixtures on every outbound channel leak nothing. No run reaches an undeclared destination or sends private-lineage data to an uncleared provider |
+| Factory poisoning | Clean-room differential synthesis and capability inference catch smuggled behavior, with a measured false-positive rate |
+| Verifier gaming | The gaming rate on impossible probes is measured with and without the fixed floor |
+| Ingress completeness | Untrusted data has no path to a worker except through the ingress service |
+| Generality | Different domains need different domain specifications, not changes to core orchestration |
+| Memory recall | Recall of the context actually needed beats agent-pull and recent-N baselines at equal or lower tokens, with no superseded items included. Full scan is compared with two-stage retrieval |
 
-Measure acceptance rate against the outcome contract, cost per accepted result, elapsed time, unproductive retries, user interruptions, material assumptions missed, necessary evidence excluded, and recovery success. Establish thresholds on a documented representative evaluation set before claiming savings or reliability. Separate runtime invariants, which need strict tests, from statistical model performance with uncertainty bounds.
+Metrics tracked across all gates:
 
-## 17. Proposed implementation sequence
+- acceptance rate against the contract;
+- cost per accepted result;
+- elapsed time;
+- unproductive retries;
+- consultations and user interruptions;
+- missed material assumptions;
+- necessary evidence that was excluded;
+- recovery success.
 
-1. **Control-plane foundation:** contracts, durable state, consensus questions, budget reservations, artifact revisions, browser/API/CLI skeleton, and a fake-provider test harness.
-2. **Full-synthesis vertical slice:** generate and admit a small executable harness, run it in isolation, verify an artifact, and recover from an interrupted attempt. Include generated logic rather than limiting the slice to template selection.
-3. **Decision and context service:** implement one available provider, policy receipts, reversible admission, shadow evaluation, and measured comparisons. Add providers only against verified APIs.
-4. **Adaptation:** harness replacement, process revision, dependency invalidation, progress-aware recovery, and user changes during execution.
-5. **Connectors and stronger environments:** one-profile account lifecycle, staged external writes, disposable VM/remote adapter, billing reconciliation, and failure tests.
-6. **Cross-domain trials:** representative course unit, construction subset, software experiment, and market-drift fixture; then larger course/estimate runs within approved budgets.
-7. **Reuse and operational hardening:** evaluated registry promotion, upgrade and backup drills, retention, and performance tuning based on measured bottlenecks.
+---
 
-These are engineering increments, not a retreat from full synthesis. A release called the general-purpose L2 should demonstrate adaptation and multiple domains; a course-generation demo alone is insufficient.
+## 19. Implementation sequence
 
-## 18. Open technical decisions
+*Status: Proposed*
 
-The following proposals can be resolved through focused design spikes without reopening established product requirements. Escalate if a choice materially changes access, cost, supported deployment, or deliverables.
+1. **Control-plane foundation.** Contracts, durable state, consensus questions and consultations, the budget ledger, artifact revisions, labels, the destination manifest, ingress and egress with deterministic normalization, the browser, API and CLI skeleton, and a fake-provider test harness.
+2. **Full-synthesis vertical slice.** Design and admit a small executable harness, run it with no worker network, verify an artifact against the floor, recover from an interrupted attempt, and trigger a consultation. The slice includes generated logic; picking a template is not enough.
+3. **Decision and context service.** One verified provider, policy receipts, shadow evaluation, ingress screening and the four-configuration comparison.
+4. **Adaptation.** Harness replacement, process revision, dependency invalidation, progress-aware recovery and user changes during execution.
+5. **Connectors and stronger environments.** The one-profile account lifecycle, staged external writes, the VM and remote adapters, billing reconciliation and failure tests.
+6. **Cross-domain trials and security evaluation.**
+   - Domain trials: a representative course unit, a construction subset, a software experiment and the market-drift fixture.
+   - Security evaluation: an adaptive red team on AgentDojo, AgentDyn and PIArena, plus L2-specific fixtures for factory poisoning, laundering across steps, emphasis injection and exfiltration.
+   - Then larger runs within approved budgets.
+7. **Reuse and hardening.** Evaluated registry promotion, upgrade and backup drills, retention, and tuning based on measured bottlenecks.
+
+These are engineering increments, not a retreat from full synthesis. A release called the general-purpose L2 has to demonstrate adaptation across several domains. A course-generation demo alone isn't enough.
+
+---
+
+## 20. Risks and assumptions
+
+*Status: Established October 5, 2026. Reviewed one by one with Scott.*
+
+| Risk | Why it matters | Mitigation or test |
+| --- | --- | --- |
+| Verification without ground truth | Most real deliverables have no answer key. Self-improving systems are known to game verifiers they can influence | Fixed verification floor, read-only verifiers, independent evidence, impossible probes, field-evidence boundaries stated in outputs |
+| Synthesis cost and latency | Designing and admitting a harness for every step costs money and time before any real work happens, especially on a cold registry | Registry reuse inside designs, per-step cost tracking, shared designs for template-instantiated nodes if approved (section 21) |
+| Utility lost to the perimeter | Strict information-flow systems have collapsed on open-ended tasks in published evaluations | The typed and prose lanes, measured utility under attack, and gates calibrated on open-ended benchmarks |
+| Decision-model accuracy and drift | Savings disappear when error costs dominate. Providers are young and change models | Measured adoption, action-specific error rates, pinned versions, revalidation, the provider abstraction |
+| Factory poisoning | A new attack surface with no field data | Clean-room differential synthesis, capability inference, taint carried into the registry |
+| Single-operator scope | Some design choices, such as one profile per instance, may not survive a move to teams | Kept as a first-release non-goal; record fields that would carry ownership later |
+
+Assumptions:
+
+- Frontier models stay capable enough to design harnesses that run.
+- At least one decision-model provider stays available, with stable typed outputs.
+- Linux hosts with gVisor or VM support are available for serious workloads.
+
+---
+
+## 21. Open decisions
+
+*Status: Open*
 
 | Decision | Proposed starting point | Evidence needed |
 | --- | --- | --- |
-| Backend and worker language | Typed Python application contracts; generated workers through a language-neutral protocol | Familiarity, isolation packaging, SDK support, concurrency tests |
-| Browser stack | TypeScript UI over a versioned API | Artifact preview and streaming needs; avoid dependence on a desktop shell |
-| Durable scheduler | Database-backed leases and explicit transitions initially | Recovery complexity and load before selecting an external workflow engine |
-| Database | PostgreSQL in the deployment | Operational burden versus transaction/concurrency requirements |
-| Strong isolation provider | Pluggable VM or remote environment broker | Host compatibility, isolation tests, startup latency, cleanup and billing behavior |
-| Decision providers | Jev as an evaluated candidate; OpenAI Decisions when access and schema are verified | Live capability, cost, latency, and task-level calibration tests |
-| Initial connector set | Files, web retrieval, a repository service, and one delivery target selected for trials | Actual workload needs and supported authentication flows |
-| Discovery allowance | Explicit instance-level allowance with a per-run disclosure | User's preferred cap; no assumed dollar amount |
-| Evaluation thresholds | Action-specific quality and cost criteria | Representative held-out fixtures and acceptable error consequences |
-| Delivery framework for course | Choose during the example run's discovery | Required interactions, import/export, accessibility, hosting and publication permissions |
+| Proof task for release one | Choose after the vertical slice | Which task best demonstrates adaptation on real work |
+| Success measure and baseline | Set once the work is further along | Early run data |
+| Perimeter process separation | Ingress, egress and credential service as separate processes with their own privileges | Operational cost against the blast-radius reduction |
+| Consultation threshold | Three invalid outputs across at least two distinct approaches | Consultation rate and wasted spend on representative runs |
+| Shared designs for template nodes | One admitted design per template, instantiated per node | Quality difference against designing each node individually |
+| Memory record granularity | Typed records extracted from turns and step outputs | Retrieval quality against message-level storage |
+| Recall budget and threshold | Per-policy threshold inside a token budget with a diversity constraint, and a capped share for tainted records | Needed-context recall and quality per token on fixtures |
+| Recall scan throughput budget | Full scan per step, two-stage fallback above a set throughput budget | Provider rate limits, concurrent harness load, scan latency |
+| Quarantine semantics | Continue with typed extractions only | Utility and safety on representative tasks |
+| Free-text limit for action parameters | Set per parameter type | Fixture results and false-block rate |
+| Screening failure behavior | Quarantine the item | Outage and budget-overrun tests |
+| Raw versus quarantined differential harnesses | Only for effect-capable steps that must read untrusted content, if at all | Cost against the attack-success reduction from graph gating alone |
+| Backend and worker language | Typed Python application contracts; workers over a language-neutral protocol | Familiarity, isolation packaging, SDK support, concurrency tests |
+| Browser stack | TypeScript UI over a versioned API | Preview and streaming needs |
+| Durable scheduler | Database-backed leases and explicit transitions | Recovery complexity and load before adopting a workflow engine |
+| Database | PostgreSQL | Operational burden against concurrency needs |
+| Restricted isolation tier | gVisor, pending a spike | Host compatibility including Docker Desktop, escape tests, startup latency |
+| Strong isolation provider | Pluggable VM or remote broker | Host compatibility, cleanup and billing behavior |
+| Decision providers | Jev as the first evaluated candidate; OpenAI Decisions once access and schema are verified | Live capability, cost, latency and task-level calibration |
+| Initial connector set | Files, web retrieval, a repository service and one delivery target | Workload needs and supported auth flows |
+| Discovery allowance | Instance-level allowance with per-run disclosure | The user's preferred cap |
+| Evaluation thresholds | Action-specific quality and cost criteria | Held-out fixtures and the consequences of errors |
+| Course delivery framework | Chosen during the example run's discovery | Interactions, import and export, accessibility, hosting, publication rights |
 
-## 19. Review checklist
+Next technical work: interface specs for the six key interfaces (section 4) and an executable plan for the vertical slice. Reviewing this design needs no production credentials, deployments or paid resources.
 
-Before implementation, review whether this brief faithfully preserves full synthesis, ongoing adaptation, material consensus, affordable decision use, Docker isolation, one-profile connections, and domain independence. Next technical work should turn the proposed records and lifecycle into interface specifications and an executable vertical-slice plan. No production credentials, deployments, paid resources, or application code changes are required to review this design.
+---
+
+## 22. Glossary
+
+| Term | Meaning |
+| --- | --- |
+| Challenge | What the user brings: a goal, materials and constraints, before any agreement |
+| Outcome contract | The agreed definition of the deliverable, its audience, scope, emphasis, acceptance criteria and authority |
+| Process | The plan of steps and dependencies that the factory designs to meet the contract |
+| Step (node) | One unit of work in the process. "Node" refers to its place in the graph |
+| Harness | The designed execution system for one step: logic, tools, context policy, decisions, verifiers, environment and recovery |
+| Attempt | One leased execution of a harness for a step |
+| Factory | The control-plane logic that designs processes and harnesses. It holds no special authority |
+| Admission | Validation a harness or plan must pass before activation |
+| Verification floor | Fixed, non-generated checks compiled from the contract. Generated verifiers add to it |
+| Consultation | A paused step's request for the user to choose how to re-adapt |
+| Ingress / egress | The single services through which untrusted data enters and all outbound traffic leaves |
+| Taint | Integrity label marking content derived from untrusted sources |
+| Confidentiality label | Private, project or public; limits where data may flow and which providers may receive it |
+| Lane | Typed (structured, can be declassified) or prose (free text, stays tainted) output from ingress |
+| Declassification gate | A point where tainted data may feed an effect: typed extraction under validated rules, a deterministic transform, or user approval |
+| Destination manifest | The closed set of external destinations a run may contact |
+| Decision model | A model that returns typed decisions with distributions, not generated text |
+| Receipt | The durable record of a decision, action, verification or approval |
+
+---
+
+## Appendix A. Lessons carried from Loom
+
+*Status: background*
+
+Loom's ad hoc path already turns a free-form goal into a process with phases, dependencies, acceptance criteria, deliverables and tool requirements. L2 extends that design activity to the execution system for each step.
+
+The table comes from a limited review of the working tree on the `codex/harden-self-correction` branch, which had local modifications. Links point to that branch's latest pushed commit (`a7cc430`), so the exact lines may differ slightly from what was reviewed. `src/loom/engine/correction/types.py` isn't on `main` yet. The review shows which mechanisms exist in the code. It doesn't prove they work reliably in production or diagnose every reported failure.
+
+| Observed Loom mechanism | L2 implication |
+| --- | --- |
+| [Ad hoc synthesis](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/tui/app/process_runs/adhoc.py) and [launch resolution](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/tui/app/process_runs/lifecycle.py) | Keep goal-driven design and inspectable synthesis traces. Make the factory a headless service shared by every interface |
+| [Process and phase contracts](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/processes/schema.py) | Keep explicit outputs, verification, iteration and remediation. Separate outcome agreements from generated execution specs |
+| [Evidence outside task prompts](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/state/evidence.py) | Keep durable evidence independent of active context. Improve admission and sufficiency without deleting excluded evidence |
+| [Context budgeting and protected exchanges](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/engine/compaction_control.py) | Account for complete requests. Protect agreements and valid tool exchanges. Make degradation explicit |
+| [Typed correction lifecycle](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/engine/correction/types.py) | Keep typed failures and progress signals. Distinguish repair, redesign, replan and consultation |
+| [Output coordination](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/engine/orchestrator/output.py) and [artifact seals](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/engine/orchestrator/evidence.py) | Isolated attempts, immutable revisions, controlled promotion, one owner for final assembly |
+| [Run resource limits](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/engine/orchestrator/budget.py) | Extend counters into durable monetary estimates, reservations, settlement, forecasts and revisions |
+| [Question normalization](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/tools/ask_user.py) and [durable questions](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/state/migrations/steps/task_questions.py) | Questions become application state with dependencies and answer provenance, independent of any terminal or live model call |
+| [Authentication resolution](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/src/loom/auth/runtime.py) | Remove profile selection and override precedence. Keep scope checks, credential lifecycle and actionable connection failures |
+| [Migration guarantees](https://github.com/sfw/loom/blob/a7cc43016d34095d3f3faf3052bba111ab282564/docs/DB-MIGRATIONS.md) | Explicit migrations, backups, upgrade verification and blocking failures, never silent loss of durable state |
+
+One Loom failure became an L2 requirement. In a market-research run, material about an audience worth roughly 1% of the stated TAM grew into about half of the final report. L2 has to tell the difference between evidence that is relevant and permission to change strategic emphasis (section 8). This brief doesn't claim to have reproduced that run.
